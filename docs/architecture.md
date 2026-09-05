@@ -10,11 +10,11 @@ Unreal Engine を操作するための構成。
 ┌────────────────────────────────────┐              ┌──────────────────────────────────┐
 │ Claude Code / Codex                │              │ NetBird (Windows サービス)       │
 │  ├ 個人の AI アカウント認証        │              │  setup key で機械として登録       │
-│  └ MCP Client                      │              │  NetBird IP: 100.71.168.109      │
+│  └ MCP Client                      │              │  NetBird IP: 100.71.174.134      │
 │         │ stdio                    │              │                                  │
 │         ▼                          │              │ Unreal Editor 5.4.4              │
 │ ue-remote-mcp (本リポジトリ)       │   NetBird    │  ├ Remote Control API            │
-│  ├ セッションロック取得/解放       │   P2P        │  │   bind 100.71.168.109:30010   │
+│  ├ セッションロック取得/解放       │   P2P        │  │   bind 100.71.174.134:30010   │
 │  ├ 監査ログ (誰が何をしたか)       │──WireGuard──▶│  ├ Python Editor Script Plugin   │
 │  └ Remote Control HTTP クライアント│   8〜9ms     │  └ UEBlueprintBridge (C++, 自作) │
 │                                    │              │      K2 ノードグラフ操作          │

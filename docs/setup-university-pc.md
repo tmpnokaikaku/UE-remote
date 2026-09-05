@@ -65,7 +65,7 @@ netbird status --detail
 確認すること:
 
 - `Management: Connected` / `Signal: Connected`
-- `NetBird IP` の値（`100.71.168.109` を想定。**変わっていたら以降の手順で読み替える**）  // 大学PC実機確認 100.71.174.134/16
+- `NetBird IP` の値（`100.71.174.134` を想定。**変わっていたら以降の手順で読み替える**）  // 大学PC実機確認 100.71.174.134/16
 - `Session expires` の表示が消えている（＝ SSO セッション依存でなくなった）
 
 ### 1-4. サービスが自動起動する状態か確認
@@ -216,10 +216,10 @@ AllowlistedClients=(...)   ; 100.71.0.0-100.71.255.255 と 127.0.0.1
 
 ```ini
 [HTTPServer.Listeners]
-DefaultBindAddress=100.71.168.109
+DefaultBindAddress=100.71.174.134
 ```
 
-`100.71.168.109` は Step 1-3 で確認した実際の NetBird IP に置き換える。
+`100.71.174.134` は Step 1-3 で確認した実際の NetBird IP に置き換える。
 
 これにより Remote Control API は **NetBird の仮想インターフェースにしか bind しない**。
 大学の LAN からも、インターネットからも到達できない。NetBird のピアからのみ届く。
@@ -261,7 +261,7 @@ curl.exe http://127.0.0.1:30010/remote/info
 ルート一覧の JSON が返れば Remote Control 自体は動いている。返らなければ Step 2/3 に戻る。
 
 ```powershell
-curl.exe http://100.71.168.109:30010/remote/info
+curl.exe http://100.71.174.134:30010/remote/info
 ```
 
 こちらも返れば NetBird IP への bind も成功している。**IP は Step 1-3 で確認した実際の値に置き換える。**
@@ -278,7 +278,7 @@ curl.exe http://100.71.168.109:30010/remote/info
 
 ```bash
 netbird status --detail | grep -A3 univ-ue-pc
-curl -m 5 http://100.71.168.109:30010/remote/info
+curl -m 5 http://100.71.174.134:30010/remote/info
 ```
 
 プローブを実行する。Python 3.10 以降、外部パッケージ不要。
@@ -286,7 +286,7 @@ curl -m 5 http://100.71.168.109:30010/remote/info
 ```bash
 cd UE-remote
 python3 scripts/probe.py \
-  --host 100.71.168.109 \
+  --host 100.71.174.134 \
   --port 30010 \
   --timeout 5 \
   --md probe-result.md \
@@ -303,7 +303,7 @@ python3 scripts/probe.py \
 毎回同じ相手を叩くなら環境変数にしておくと楽。
 
 ```bash
-export UE_REMOTE_HOST=100.71.168.109
+export UE_REMOTE_HOST=100.71.174.134
 export UE_REMOTE_PORT=30010
 python3 scripts/probe.py --md probe-result.md --json probe-result.json
 ```
@@ -343,3 +343,5 @@ python3 scripts/probe.py --md probe-result.md --json probe-result.json
 | `127.0.0.1` は返るが NetBird IP は返らない | `DefaultBindAddress` の IP が現在の NetBird IP と一致しているか。UE 起動時に NetBird が繋がっていたか |
 | Python 実行だけ失敗する | Python Editor Script Plugin が有効か。Step 3 のリモート Python 実行許可が ON か |
 | NetBird IP が変わった | `DefaultEngine.ini` の `DefaultBindAddress` を更新してエディタ再起動 |
+| **setup key で再登録した直後に繋がらなくなった** | **再登録すると NetBird IP が変わる**（ピアが作り直されるため。公開鍵が同じでも別 IP になる）。`netbird status --detail` で新しい IP を確認し、`DefaultBindAddress` を書き換えてエディタ再起動。Step 1 と Step 4 は必ずこの順で行う |
+| 相手ピアが `Status: Idle` | NetBird の lazy connection。トラフィックが流れるまでトンネルを張らない仕様なので異常ではない。`ping <相手IP>` を一度打てば起きる |

@@ -7,7 +7,7 @@
 Python 3.10 以降で、リポジトリのルートから実行します。
 
 ```bash
-python3 scripts/probe.py --host 100.71.168.109 --port 30010 --timeout 5 \
+python3 scripts/probe.py --host 100.71.174.134 --port 30010 --timeout 5 \
   --json probe-result.json --md probe-result.md
 ```
 

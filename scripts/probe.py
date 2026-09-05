@@ -21,6 +21,19 @@ MAX_BODY_CHARS = 20_000
 PYTHON_LIBRARY = "/Script/PythonScriptPlugin.Default__PythonScriptLibrary"
 PYTHON_MARKER = "__ue_remote_probe_ok__"
 ENV_MARKER = "__ue_remote_probe_env_json__"
+LATENCY_THROTTLE_HINT_THRESHOLD_MS = 100.0
+LATENCY_THROTTLE_HINT = (
+    "エディタの CPU スロットリングの可能性があります。Editor Preferences > Performance > "
+    '"Use Less CPU when in Background" (`bThrottleCPUWhenNotForeground`) を無効にすると改善する'
+    "可能性があります"
+)
+BATCH_SKIP_REASON = (
+    "既定では実行しません（エディタをクラッシュさせる既知の不具合があります。"
+    "--include-batch で明示的に有効化できます）"
+)
+BATCH_WARNING = (
+    "WARN: /remote/batch を実行します。既知のエンジン不具合によりエディタがクラッシュする可能性があります。"
+)
 
 
 @dataclass
@@ -54,6 +67,7 @@ class ProbeContext:
     timeout: float
     tcp_ok: bool = False
     python_ok: bool = False
+    include_batch: bool = False
 
     @property
     def base_url(self) -> str:
@@ -69,6 +83,7 @@ class CheckSpec:
     run: Callable[[ProbeContext], CheckResult]
     needs_tcp: bool = False
     needs_python: bool = False
+    needs_batch_opt_in: bool = False
 
 
 def elapsed_ms(start: float) -> float:
@@ -260,6 +275,7 @@ def environment_command() -> str:
     script = f"""import unreal
 import json
 import os
+import re
 import time
 
 project_file = unreal.Paths.get_project_file_path()
@@ -272,6 +288,7 @@ info = {{
     "saved_dir": saved_dir,
     "enabled_plugins": [],
     "symbols": {{}},
+    "editor_throttle": None,
     "saved_write_test": {{"ok": False, "error": None}},
 }}
 
@@ -289,6 +306,47 @@ try:
         info["enabled_plugins"] = [str(item) for item in getter()]
 except Exception as exc:
     info["plugin_query_error"] = type(exc).__name__ + ": " + str(exc)
+
+# UE のバージョンや Python 公開名によって設定クラス名・プロパティ名が異なるため、
+# 設定オブジェクトと ini の順でベストエフォートに取得する。
+for class_name in ("EditorPerProjectUserSettings", "EditorPerformanceSettings"):
+    try:
+        settings_class = getattr(unreal, class_name, None)
+        if settings_class is not None:
+            settings = unreal.get_default_object(settings_class)
+            for property_name in (
+                "b_throttle_cpu_when_not_foreground",
+                "throttle_cpu_when_not_foreground",
+                "bThrottleCPUWhenNotForeground",
+            ):
+                try:
+                    value = settings.get_editor_property(property_name)
+                except Exception:
+                    continue
+                if isinstance(value, bool):
+                    info["editor_throttle"] = value
+                    break
+    except Exception:
+        continue
+    if info["editor_throttle"] is not None:
+        break
+
+if info["editor_throttle"] is None:
+    try:
+        settings_ini = os.path.join(
+            saved_dir, "Config", "WindowsEditor", "EditorPerProjectUserSettings.ini"
+        )
+        with open(settings_ini, "r", encoding="utf-8-sig", errors="replace") as handle:
+            settings_text = handle.read()
+        match = re.search(
+            r"^\\s*bThrottleCPUWhenNotForeground\\s*=\\s*(True|False|1|0)\\s*(?:[;#].*)?$",
+            settings_text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        if match:
+            info["editor_throttle"] = match.group(1).lower() in ("true", "1")
+    except Exception:
+        pass
 
 probe_path = os.path.join(saved_dir, ".ue_remote_probe_" + str(os.getpid()) + "_" + str(time.time_ns()))
 try:
@@ -455,13 +513,16 @@ def latency_check(context: ProbeContext) -> CheckResult:
         if ok
         else f"成功した測定は {len(successful)}/5 回" + ("" if successful else "; レイテンシを算出不能")
     )
+    details: dict[str, Any] = {"attempts": 5, "successful_attempts": len(successful), **metrics}
+    if ok and metrics["median_ms"] > LATENCY_THROTTLE_HINT_THRESHOLD_MS:
+        details["diagnostic_hint"] = LATENCY_THROTTLE_HINT
     return CheckResult(
         "latency",
         "レイテンシ測定 (GET /remote/info × 5)",
         "OK" if ok else "FAIL",
         reason,
         elapsed_ms(start),
-        {"attempts": 5, "successful_attempts": len(successful), **metrics},
+        details,
         exchanges,
     )
 
@@ -478,17 +539,27 @@ def run_checks(context: ProbeContext) -> list[CheckResult]:
         CheckSpec("environment", "環境情報の取得", environment_check, needs_tcp=True, needs_python=True),
         CheckSpec("asset_search", "PUT /remote/search/assets", assets_check, needs_tcp=True),
         CheckSpec("object_describe", "PUT /remote/object/describe", describe_check, needs_tcp=True),
-        CheckSpec("batch", "PUT /remote/batch", batch_check, needs_tcp=True),
+        CheckSpec(
+            "batch",
+            "PUT /remote/batch",
+            batch_check,
+            needs_tcp=True,
+            needs_batch_opt_in=True,
+        ),
         CheckSpec("latency", "レイテンシ測定 (GET /remote/info × 5)", latency_check, needs_tcp=True),
     ]
     results: list[CheckResult] = []
     for spec in checks:
-        if spec.needs_tcp and not context.tcp_ok:
+        if spec.needs_batch_opt_in and not context.include_batch:
+            results.append(skipped(spec, BATCH_SKIP_REASON))
+        elif spec.needs_tcp and not context.tcp_ok:
             results.append(skipped(spec, "TCP 接続不能のため未実施"))
         elif spec.needs_python and not context.python_ok:
             results.append(skipped(spec, "Python 実行不可のため未実施"))
         else:
             try:
+                if spec.needs_batch_opt_in:
+                    print(BATCH_WARNING, file=sys.stderr)
                 results.append(spec.run(context))
             except Exception as exc:  # 各検査の実装不備も結果化し、後続を止めない。
                 results.append(
@@ -605,6 +676,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=os.environ.get("UE_REMOTE_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=env_port_default())
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument(
+        "--include-batch",
+        action="store_true",
+        help="既知の不具合でエディタがクラッシュする可能性がある /remote/batch 検査を実行します",
+    )
     parser.add_argument("--json", dest="json_path", metavar="PATH")
     parser.add_argument("--md", dest="md_path", metavar="PATH")
     args = parser.parse_args()
@@ -617,7 +693,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    context = ProbeContext(args.host, args.port, args.timeout)
+    context = ProbeContext(args.host, args.port, args.timeout, include_batch=args.include_batch)
     start = time.perf_counter()
     results = run_checks(context)
     document = result_document(context, results, elapsed_ms(start))

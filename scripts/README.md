@@ -1,6 +1,6 @@
 # Unreal Engine Remote Control API 能力プローブ
 
-`probe.py` は、Unreal Engine 5.4.4 の Remote Control API で実際に利用できる機能を、1 回の実行で記録するための標準ライブラリのみのスクリプトです。接続先が停止中でも例外で中断せず、到達不能を結果として報告します。
+`probe.py` は、Unreal Engine 5.5.4 の Remote Control API で実際に利用できる機能を、1 回の実行で記録するための標準ライブラリのみのスクリプトです。接続先が停止中でも例外で中断せず、到達不能を結果として報告します。
 
 ## 実行方法
 

@@ -1,7 +1,7 @@
 # UE-remote
 
 手元PC の AI エージェント（Claude Code / Codex）から、大学の共用 Windows PC で動く
-Unreal Engine 5.4.4 を操作するための仕組み。
+Unreal Engine 5.5.4 を操作するための仕組み。
 
 AI の認証情報は手元PC にのみ置き、大学PC には一切置かない。大学PC 側は NetBird VPN と
 Unreal Engine の Remote Control API だけで完結し、Windows 本体の設定は変更しない。
@@ -9,7 +9,7 @@ Unreal Engine の Remote Control API だけで完結し、Windows 本体の設�
 ```text
 手元PC (WSL)                                 大学PC (Windows, 共用)
 Claude Code / Codex                          NetBird (機械登録)
-  └ ue-remote-mcp ──── NetBird P2P ────────▶ Unreal Editor 5.4.4
+  └ ue-remote-mcp ──── NetBird P2P ────────▶ Unreal Editor 5.5.4
       ロック / 監査ログ / RC クライアント        └ Remote Control API :30010
                                                   (NetBird IP にのみ bind)
 ```

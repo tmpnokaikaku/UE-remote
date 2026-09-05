@@ -54,8 +54,16 @@ EditorActorSubsystem, PluginBlueprintLibrary, PythonScriptLibrary
 [FAIL] レイテンシ測定: 成功した測定は 0/5 回
 ```
 
-`/remote/batch` を呼んだ直後に接続がリセットされ、**以降エディタが一切応答しなくなった**
-（NetBird の疎通は正常なまま、ping 6ms）。実質的にエディタをクラッシュさせている。
+`/remote/batch` を呼んだ直後に接続がリセットされ、**エディタがクラッシュした**
+（NetBird の疎通は正常なまま、ping 6ms）。クラッシュレポーターの内容:
+
+```
+Assertion failed: Pair != nullptr
+[File:D:\build\++UE5\Sync\Engine\Source\Runtime\Core\Public\Containers\Map.h] [Line: 690]
+```
+
+`TMap` の要素引きが `nullptr` を返した箇所での assert であり、**エンジン側の不具合**。
+リクエストの内容が不正だったわけではない。
 
 `GET /remote/info` のルート一覧には `Put /remote/batch` が載っているが、**使ってはいけない。**
 往復削減は Python スクリプト側にループを寄せる方法だけで行う。
@@ -63,12 +71,33 @@ EditorActorSubsystem, PluginBlueprintLibrary, PythonScriptLibrary
 > プローブは `/remote/batch` を検査項目から外すか、`--skip-batch` のような
 > 明示的なオプトインに変更する必要がある（Phase 1 で対応）。
 
-### レイテンシ
+### レイテンシ（再測定済み）
 
-個別リクエストは 280〜410 ms。NetBird の RTT は 6〜10 ms なので、**遅延の大半は
-UE 側の処理とコネクション確立**であり、回線ではない。往復回数の削減が効く。
+エディタ再起動後、batch を避けて `GET /remote/info` を7回測定した。
 
-（5回連続測定は上記クラッシュの後だったため取得できていない。再測定が必要。）
+```
+        TCP connect   HTTP total
+1回目     587 ms        822 ms     ← コールドスタート
+2回目       9 ms        328 ms
+3回目       6 ms        333 ms
+4回目       6 ms        318 ms
+5回目       7 ms        325 ms
+6回目       9 ms        329 ms
+7回目       6 ms        337 ms
+```
+
+**TCP は 6〜9 ms、HTTP は一貫して 320 ms 前後。** 回線は速く、UE 側で 320 ms 使っている。
+
+320 ms は約 3 FPS に相当する。原因は**エディタの CPU スロットリング**とみられる。
+Remote Control の HTTP 処理はゲームスレッド上で行われるため、
+エディタのフレームレートがそのまま応答遅延になる。大学PC は誰も操作していない＝
+常に非フォーカスなので、既定設定では常時スロットリングされた状態になる。
+
+対処は Editor Preferences > Performance > **Use Less CPU when in Background** を
+無効にすること。設定キーは `[/Script/UnrealEd.EditorPerProjectUserSettings]` の
+`bThrottleCPUWhenNotForeground`（`EditorPerProjectUserSettings.ini`）。
+
+**未検証**: 実際に無効化してどこまで縮むかは要測定。仮説の段階。
 
 ## 利用可能なエンドポイント（`/remote/info` より抜粋）
 
@@ -89,8 +118,11 @@ Put      /remote/batch                  ← 存在するが使用禁止
 
 ## 未確認・要確認
 
-- **対象プロジェクトの取り違えの可能性。** 実行中のプロジェクトは
-  `hitotsubashi_2025_3` だが、事前に共有された `DefaultEngine.ini` は
-  `GameName=MyProject6` だった。どちらが本番の対象かを確定させる必要がある。
-- レイテンシの再測定（クラッシュにより未取得）
+- `bThrottleCPUWhenNotForeground` を無効にした場合のレイテンシ改善幅
 - `K2Node` 経由でノード追加・ピン配線が可能かの実地確認
+
+## 決着した論点
+
+- **対象プロジェクト**: `hitotsubashi_2025_3` で確定。`DefaultEngine.ini` の
+  `GameName=MyProject6` は複製元の名残であり、識別子にならない。
+  詳細と他プロジェクトの棚卸しは [projects.md](projects.md) を参照。

@@ -151,20 +151,62 @@ WebSocket サーバー（`30020`）の bind アドレスは既定で `0.0.0.0`�
 
 セクション名は `[/Script/RemoteControlCommon.RemoteControlSettings]`。
 
-実際にどこへ書かれたかは、プロジェクト直下で以下を実行すれば確定する。
+設定画面右上の **「デフォルトとして設定」** を押すと `Config/DefaultRemoteControl.ini` が
+生成され、プロジェクトの設定として固定される。共用機で Windows ユーザが変わっても
+残るよう、**必ず押すこと**（実機で生成を確認済み）。
 
-```powershell
-Get-ChildItem -Recurse -Filter *.ini |
-  Select-String -Pattern "RemoteControlSettings|bEnableRemotePythonExecution" |
-  Select-Object Path, LineNumber, Line
+### 3-5. 落とし穴（実機で踏んだもの）
+
+#### 「許可されたオリジン」に IP を書かない
+
+`AllowedOrigin` は **HTTP の `Origin` ヘッダ（CORS）の照合先**であり、IP の許可リストではない。
+
+- CORS はブラウザが自主的に守る仕組みで、ブラウザ以外のクライアントには何の制約にもならない
+- 本構成のクライアントは Python スクリプトで、`Origin` ヘッダをそもそも送らない
+
+ここに IP を書いてもセキュリティ上の効果は無く、リクエストを弾く副作用だけが残る。
+**`*` のままにする。** IP 制限は `AllowlistedClients` の役目。
+
+#### `AllowlistedClients` の既定値は極端に広い
+
+実機の初期値は以下だった。
+
+```ini
+AllowlistedClients=((LowerBound=(ClassA=192,ClassB=168,ClassC=1,ClassD=1),UpperBound=(ClassA=255,ClassB=255,ClassC=255,ClassD=255)))
 ```
 
-`Saved/Config/...` 側にしか無い場合、その設定は**このPCのこのユーザにしか効かない**。
-プロジェクト設定画面の右上にある **「デフォルトとして設定」** を押すと
-`Config/DefaultRemoteControl.ini` に昇格し、プロジェクトの設定として固定される。
-共用機なので、**「デフォルトとして設定」を押しておくこと。**
+`192.168.1.1` 〜 `255.255.255.255`、IPv4 空間のおよそ 1/3。大学 LAN が `192.168.x.x` なら
+その全ホストが該当する。`bRestrictServerAccess=True` は効いていても、レンジが広すぎて
+実質的な制限になっていない。**しかも NetBird の `100.71.x.x` は下限より小さいので範囲外**で、
+広すぎるのに目的のクライアントだけ入っていない状態になる。
 
-見つかった `RemoteControl.ini` の中身を共有してもらえれば、手順書を確定させる。
+> **Step 4 を終えるまで UE を起動したままにしない。**
+> bind が全インターフェースのまま、かつリモート Python 実行が有効な状態は
+> 大学 LAN に対して開いている。
+
+### 3-6. 目標とする設定値
+
+`▶` を展開すると `LowerBound` / `UpperBound` を編集できる。
+
+- 既存要素を **`100.71.0.0` 〜 `100.71.255.255`** に変更（NetBird オーバーレイの `/16`。
+  メンバーが増えても IP を追い足さずに済む）
+- `⊕` で2要素目に **`127.0.0.1` 〜 `127.0.0.1`**（大学PC 自身からの `curl` 確認用）
+
+編集後、もう一度「デフォルトとして設定」を押す。結果の
+`Config/DefaultRemoteControl.ini` は以下になるはず。
+
+```ini
+[/Script/RemoteControlCommon.RemoteControlSettings]
+bAutoStartWebServer=True
+bAutoStartWebSocketServer=False
+RemoteControlHttpServerPort=30010
+bRestrictServerAccess=True
+bEnableRemotePythonExecution=True
+bAllowConsoleCommandRemoteExecution=True
+bEnforcePassphraseForRemoteClients=False
+AllowedOrigin=*
+AllowlistedClients=(...)   ; 100.71.0.0-100.71.255.255 と 127.0.0.1
+```
 
 ---
 

@@ -10,13 +10,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from mcp.ue_remote.config import Config
-from mcp.ue_remote.errors import (
+from ue_remote.config import Config
+from ue_remote.errors import (
     PythonExecutionError,
     RemoteControlHTTPError,
     RemoteControlUnreachable,
 )
-from mcp.ue_remote.rc_client import PYTHON_LIBRARY, RemoteControlClient
+from ue_remote.rc_client import PYTHON_LIBRARY, RemoteControlClient
 
 
 class FakeRemoteControlHandler(BaseHTTPRequestHandler):

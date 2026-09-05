@@ -10,7 +10,7 @@ import types
 import unittest
 from pathlib import Path
 
-from mcp.ue_remote.audit import AuditLog, PARAMS_PREVIEW_CHARS
+from ue_remote.audit import AuditLog, PARAMS_PREVIEW_CHARS
 
 
 class _FakeClient:

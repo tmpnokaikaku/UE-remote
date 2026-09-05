@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcp.ue_remote.config import ConfigError, load_config
+from ue_remote.config import ConfigError, load_config
 
 
 class ConfigTests(unittest.TestCase):

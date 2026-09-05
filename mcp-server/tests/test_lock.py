@@ -11,7 +11,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from mcp.ue_remote.lock import SessionLock
+from ue_remote.lock import SessionLock
 
 
 class _FakeClient:

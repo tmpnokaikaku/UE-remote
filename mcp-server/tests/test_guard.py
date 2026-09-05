@@ -8,7 +8,7 @@ import sys
 import types
 import unittest
 
-from mcp.ue_remote.guard import verify
+from ue_remote.guard import verify
 
 
 class _FakeClient:

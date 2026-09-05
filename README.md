@@ -22,7 +22,7 @@ Claude Code / Codex                          NetBird (機械登録)
 |---|---|---|
 | `docs/` | アーキテクチャと手順書 | — |
 | `scripts/` | 能力プローブ等の運用スクリプト | 手元PC |
-| `mcp/` | MCP サーバ本体 | 手元PC |
+| `mcp-server/` | MCP サーバ本体 | 手元PC |
 | `plugins/` | UE C++ プラグイン（K2 ノード操作。既存の流用 or 自作） | 大学PC |
 
 ## セットアップ

@@ -210,6 +210,38 @@ AllowlistedClients=(...)   ; 100.71.0.0-100.71.255.255 と 127.0.0.1
 
 ---
 
+### 3-7. CPU スロットリングを無効にする（レイテンシに直結）
+
+```
+Edit > Editor Preferences > General > Performance
+  「Use Less CPU when in Background」→ OFF
+```
+
+Remote Control の HTTP 処理は**ゲームスレッド上**で行われるため、エディタの
+フレームレートがそのまま応答遅延になる。大学PC は誰も操作していない＝常に非フォーカスなので、
+既定のままだと常時スロットリングされた状態で待つことになる。
+
+実測（`GET /remote/info`、NetBird の TCP RTT は 6〜10ms）:
+
+| 状態 | median レイテンシ | 換算 |
+|---|---|---|
+| スロットリング有効（既定）・非フォーカス | **約 320 ms** | 約 3 FPS |
+| スロットリング無効・非フォーカス | **約 28 ms** | 約 35 FPS |
+
+**11 倍の差**。往復のたびに効くので、体感差は非常に大きい。
+
+書き込み先は `<Project>/Config/DefaultEditorSettings.ini`。
+
+```ini
+[/Script/UnrealEd.EditorPerformanceSettings]
+bThrottleCPUWhenNotForeground=False
+```
+
+> UE は既定値と異なる値だけを ini に書く。この設定の既定は `True` なので、
+> **キーが1行も無い状態＝スロットリング有効**を意味する。「書いていない＝未設定」ではない。
+
+---
+
 ## Step 4. bind アドレスを NetBird IP に変更
 
 プロジェクトの `Config/DefaultEngine.ini` に以下を追記する。

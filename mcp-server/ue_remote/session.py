@@ -64,9 +64,11 @@ class Session:
         )
 
         self._mutex = threading.RLock()
+        self._guard_verify_lock = threading.Lock()
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
         self._guard_result: GuardResult | None = None
+        self._guard_verified_at: float | None = None
         self._lock_result: LockResult | None = None
         self._owns_lock = False
         self._release_pending = False
@@ -79,28 +81,62 @@ class Session:
         self._audit_errors = 0
         self._audit_write_failures = 0
 
-        # プロジェクト確認はセッション開始時に一度だけ行い、以後は
-        # ロック保持中のハートビートが結果を更新する。
+        # プロジェクト確認はセッション開始時に行い、成功結果だけを
+        # ハートビート間隔のあいだキャッシュする。
         self.ensure_guard()
 
     def ensure_guard(self) -> GuardResult:
-        """未確認ならプロジェクトを確認し、キャッシュした結果を返す。"""
+        """有効な成功キャッシュがなければプロジェクトを再確認する。"""
 
         with self._mutex:
-            if self._guard_result is None:
-                started = time.perf_counter()
-                try:
-                    self._guard_result = self.guard.verify()
-                except Exception as exc:
-                    self._guard_result = GuardResult(
-                        False,
-                        f"プロジェクト確認に失敗しました: {type(exc).__name__}: {exc}",
-                        self.config.expected_project,
-                        None,
-                        None,
-                    )
-                self._last_latency_ms = _elapsed_ms(started)
-            return self._guard_result
+            cached = self._fresh_guard_result_locked()
+        if cached is not None:
+            return cached
+
+        # 通信中はセッション全体のミューテックスを保持しない。同時に複数の
+        # 再確認が走ることだけを専用ロックで防ぐ。
+        with self._guard_verify_lock:
+            with self._mutex:
+                cached = self._fresh_guard_result_locked()
+            if cached is not None:
+                return cached
+            return self._verify_guard("プロジェクト確認に失敗しました")
+
+    def _fresh_guard_result_locked(self) -> GuardResult | None:
+        result = self._guard_result
+        verified_at = self._guard_verified_at
+        if result is None or not result.ok or verified_at is None:
+            return None
+        ttl_seconds = float(self.config.lock_heartbeat_seconds)
+        if time.monotonic() - verified_at >= ttl_seconds:
+            return None
+        return result
+
+    def _verify_guard(self, failure_message: str) -> GuardResult:
+        """ガードを確認し、成功した結果だけをキャッシュする。"""
+
+        started = time.perf_counter()
+        try:
+            result = self.guard.verify()
+        except Exception as exc:
+            result = GuardResult(
+                False,
+                f"{failure_message}: {type(exc).__name__}: {exc}",
+                self.config.expected_project,
+                None,
+                None,
+            )
+        verified_at = time.monotonic()
+        latency_ms = _elapsed_ms(started)
+        with self._mutex:
+            self._last_latency_ms = latency_ms
+            if result.ok:
+                self._guard_result = result
+                self._guard_verified_at = verified_at
+            else:
+                self._guard_result = None
+                self._guard_verified_at = None
+        return result
 
     def ensure_lock(self) -> LockResult:
         """変更が必要になった時点でロックを遅延取得する。"""
@@ -139,7 +175,10 @@ class Session:
         with self._mutex:
             if self._closed:
                 return AccessResult(False, "セッションはすでに終了しています", "session")
-            guard_result = self.ensure_guard()
+        guard_result = self.ensure_guard()
+        with self._mutex:
+            if self._closed:
+                return AccessResult(False, "セッションはすでに終了しています", "session")
             if not guard_result.ok:
                 return AccessResult(False, _guard_rejection(guard_result), "guard")
             return AccessResult(True, guard_result.warning or "参照を実行できます")
@@ -147,10 +186,10 @@ class Session:
     def require_write(self) -> AccessResult:
         """変更系ツールのガードと遅延ロック取得を行う。"""
 
+        read_result = self.require_read()
+        if not read_result.ok:
+            return read_result
         with self._mutex:
-            read_result = self.require_read()
-            if not read_result.ok:
-                return read_result
             if not self._write_healthy:
                 return AccessResult(
                     False,
@@ -203,10 +242,10 @@ class Session:
         return result
 
     def status(self) -> dict[str, Any]:
-        """通信を増やさず、キャッシュ済みのセッション状態を返す。"""
+        """必要ならガードを再確認し、現在のセッション状態を返す。"""
 
+        guard_result = self.ensure_guard()
         with self._mutex:
-            guard_result = self._guard_result
             lock_result = self._lock_result
             heartbeat_alive = bool(
                 self._heartbeat_thread and self._heartbeat_thread.is_alive()
@@ -328,27 +367,19 @@ class Session:
                 if self._closed or not self._owns_lock:
                     return
 
-                started = time.perf_counter()
-                try:
-                    lock_result = self.lock.heartbeat()
-                except Exception as exc:
-                    lock_result = LockResult(
-                        False,
-                        f"ハートビートに失敗しました: {type(exc).__name__}: {exc}",
-                    )
-                try:
-                    guard_result = self.guard.verify()
-                except Exception as exc:
-                    guard_result = GuardResult(
-                        False,
-                        f"プロジェクト再確認に失敗しました: {type(exc).__name__}: {exc}",
-                        self.config.expected_project,
-                        None,
-                        None,
-                    )
+            started = time.perf_counter()
+            try:
+                lock_result = self.lock.heartbeat()
+            except Exception as exc:
+                lock_result = LockResult(
+                    False,
+                    f"ハートビートに失敗しました: {type(exc).__name__}: {exc}",
+                )
+            with self._guard_verify_lock:
+                guard_result = self._verify_guard("プロジェクト再確認に失敗しました")
+            with self._mutex:
                 self._last_latency_ms = _elapsed_ms(started)
                 self._lock_result = lock_result
-                self._guard_result = guard_result
                 if not lock_result.ok or not guard_result.ok:
                     self._write_healthy = False
                     details: list[str] = []

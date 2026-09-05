@@ -53,8 +53,19 @@ Python 3.10以上の仮想環境へインストールします。
 cd /absolute/path/to/UE-remote
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install ./mcp-server
+python3 -m pip install -e ./mcp-server
 ```
+
+> **`-e`（編集可能インストール）を付けること。** 省略すると `site-packages` へ
+> ファイルがコピーされ、**ソースを直しても `ue-remote-mcp` の挙動は変わらない**。
+> 実際にこれを踏んだ: 不具合を修正したのに直っていないように見え、原因の切り分けに
+> 時間を使った。`git pull` で更新する運用でも同じ問題が起きる。
+>
+> 読み込み元は次で確認できる。リポジトリ内のパスが出ればよい。
+>
+> ```bash
+> .venv/bin/python -c "import ue_remote, os; print(os.path.dirname(ue_remote.__file__))"
+> ```
 
 インストール後は `ue-remote-mcp` コマンドでstdioサーバを起動できます。標準出力は
 MCP通信専用で、ログは標準エラーへ出力されます。

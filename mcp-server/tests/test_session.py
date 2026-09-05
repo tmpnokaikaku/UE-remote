@@ -10,8 +10,10 @@ import types
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from ue_remote.config import AuditConfig, Config, LockConfig
+from ue_remote.guard import GuardResult
 from ue_remote.interfaces import PythonResult
 from ue_remote.session import Session
 
@@ -99,6 +101,19 @@ class FakeClient:
         return {"object_path": object_path}
 
 
+class FakeGuard:
+    """指定した順番で結果を返す偽ガード。"""
+
+    def __init__(self, results: list[GuardResult]) -> None:
+        self.results = results
+        self.verify_calls = 0
+
+    def verify(self) -> GuardResult:
+        result = self.results[min(self.verify_calls, len(self.results) - 1)]
+        self.verify_calls += 1
+        return result
+
+
 class SessionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -117,10 +132,22 @@ class SessionTest(unittest.TestCase):
         self.sessions: list[Session] = []
         self.addCleanup(self._close_sessions)
 
-    def _session(self, *, client: FakeClient | None = None) -> Session:
-        session = Session(self.config, client=client or self.client)
+    def _session(
+        self, *, client: FakeClient | None = None, guard: FakeGuard | None = None
+    ) -> Session:
+        session = Session(self.config, client=client or self.client, guard=guard)
         self.sessions.append(session)
         return session
+
+    def _guard_result(self, ok: bool) -> GuardResult:
+        actual = "ExpectedProject" if ok else None
+        return GuardResult(
+            ok,
+            "確認できました" if ok else "TimeoutError: 接続できません",
+            "ExpectedProject",
+            actual,
+            f"/projects/{actual}/{actual}.uproject" if actual else None,
+        )
 
     def _close_sessions(self) -> None:
         for session in self.sessions:
@@ -172,6 +199,46 @@ class SessionTest(unittest.TestCase):
         self.assertIn("WrongProject", read.message)
         self.assertEqual(client.acquire_calls, 0)
         self.assertEqual(session.status()["project"]["actual"], "WrongProject")
+
+    def test_failed_guard_result_is_not_cached(self) -> None:
+        guard = FakeGuard([self._guard_result(False), self._guard_result(True)])
+        session = self._session(guard=guard)
+
+        result = session.require_read()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(guard.verify_calls, 2)
+
+    def test_successful_guard_result_is_cached_within_ttl(self) -> None:
+        guard = FakeGuard([self._guard_result(True)])
+        session = self._session(guard=guard)
+
+        self.assertTrue(session.require_read().ok)
+        self.assertTrue(session.require_read().ok)
+
+        self.assertEqual(guard.verify_calls, 1)
+
+    def test_successful_guard_result_is_refreshed_after_ttl(self) -> None:
+        guard = FakeGuard([self._guard_result(True)])
+        with mock.patch("ue_remote.session.time.monotonic", return_value=100.0) as clock:
+            session = self._session(guard=guard)
+            self.assertTrue(session.require_read().ok)
+            self.assertEqual(guard.verify_calls, 1)
+
+            clock.return_value = 100.051
+            self.assertTrue(session.require_read().ok)
+
+        self.assertEqual(guard.verify_calls, 2)
+
+    def test_status_rechecks_after_failed_guard_result(self) -> None:
+        guard = FakeGuard([self._guard_result(False), self._guard_result(True)])
+        session = self._session(guard=guard)
+
+        status = session.status()
+
+        self.assertTrue(status["project"]["ok"])
+        self.assertEqual(status["project"]["actual"], "ExpectedProject")
+        self.assertEqual(guard.verify_calls, 2)
 
     def test_close_releases_lock_and_stops_heartbeat(self) -> None:
         session = self._session()

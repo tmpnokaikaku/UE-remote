@@ -58,23 +58,28 @@ NetBirdのsetup key、トークン、パスワードなどの秘密とともに�
     "ue-remote": {
       "type": "stdio",
       "command": "/absolute/path/to/UE-remote/.venv/bin/ue-remote-mcp",
-      "args": [],
-      "env": {
-        "UE_REMOTE_DEVELOPER_ID": "your-id",
-        "UE_REMOTE_PROJECT": "hitotsubashi_2025_3"
-      }
+      "args": []
     }
   }
 }
 ```
 
+> **`env` に `UE_REMOTE_DEVELOPER_ID` などを書かないこと。** 上記の
+> `config.toml` があれば環境変数は不要（実機で確認済み）。登録側にも書くと
+> 設定が2箇所に分散し、食い違ったときに監査ログの主体が変わってしまう。
+> 環境変数は一時的な上書き（別のプロジェクトへ一度だけ繋ぐなど）に留める。
+
 Claude CodeではCLIからも登録できます。
 
 ```bash
-claude mcp add --transport stdio \
-  --env UE_REMOTE_DEVELOPER_ID=your-id \
-  --env UE_REMOTE_PROJECT=hitotsubashi_2025_3 ue-remote -- \
+claude mcp add --transport stdio ue-remote -- \
   /absolute/path/to/UE-remote/.venv/bin/ue-remote-mcp
+```
+
+登録できたかは次で確認する。`✔ Connected` と出れば成功。
+
+```bash
+claude mcp list
 ```
 
 Codexでは次のCLI登録が使えます。

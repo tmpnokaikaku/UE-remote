@@ -23,9 +23,10 @@ PYTHON_MARKER = "__ue_remote_probe_ok__"
 ENV_MARKER = "__ue_remote_probe_env_json__"
 LATENCY_THROTTLE_HINT_THRESHOLD_MS = 100.0
 LATENCY_THROTTLE_HINT = (
-    "エディタの CPU スロットリングの可能性があります。Editor Preferences > Performance > "
-    '"Use Less CPU when in Background" (`bThrottleCPUWhenNotForeground`) を無効にすると改善する'
-    "可能性があります"
+    "エディタの CPU スロットリングの可能性があります。Editor Preferences > General > "
+    'Performance > "Use Less CPU when in Background" を無効にするか、<ProjectDir>/Config/'
+    "DefaultEditorSettings.ini の [/Script/UnrealEd.EditorPerformanceSettings] にある "
+    "bThrottleCPUWhenNotForeground を確認してください（実測: 有効時 約320 ms、無効時 約28 ms）"
 )
 BATCH_SKIP_REASON = (
     "既定では実行しません（エディタをクラッシュさせる既知の不具合があります。"
@@ -279,16 +280,17 @@ import re
 import time
 
 project_file = unreal.Paths.get_project_file_path()
+project_dir = unreal.Paths.project_dir()
 saved_dir = unreal.Paths.project_saved_dir()
 info = {{
     "engine_version": unreal.SystemLibrary.get_engine_version(),
     "project_name": os.path.splitext(os.path.basename(project_file))[0],
     "project_file_path": project_file,
-    "project_dir": unreal.Paths.project_dir(),
+    "project_dir": project_dir,
     "saved_dir": saved_dir,
     "enabled_plugins": [],
     "symbols": {{}},
-    "editor_throttle": None,
+    "editor_throttle": {{"throttling": None, "source": "unknown", "path": None}},
     "saved_write_test": {{"ok": False, "error": None}},
 }}
 
@@ -307,46 +309,61 @@ try:
 except Exception as exc:
     info["plugin_query_error"] = type(exc).__name__ + ": " + str(exc)
 
-# UE のバージョンや Python 公開名によって設定クラス名・プロパティ名が異なるため、
-# 設定オブジェクトと ini の順でベストエフォートに取得する。
-for class_name in ("EditorPerProjectUserSettings", "EditorPerformanceSettings"):
-    try:
-        settings_class = getattr(unreal, class_name, None)
-        if settings_class is not None:
-            settings = unreal.get_default_object(settings_class)
-            for property_name in (
-                "b_throttle_cpu_when_not_foreground",
-                "throttle_cpu_when_not_foreground",
-                "bThrottleCPUWhenNotForeground",
-            ):
-                try:
-                    value = settings.get_editor_property(property_name)
-                except Exception:
-                    continue
-                if isinstance(value, bool):
-                    info["editor_throttle"] = value
-                    break
-    except Exception:
-        continue
-    if info["editor_throttle"] is not None:
-        break
+# EditorPerformanceSettings は UE 5.5.4 の Python に公開されていないため、
+# 優先順で最初に見つかった ini から読み取る。キーがなければ UE の既定値 True。
+selected_ini = None
+try:
+    settings_candidates = (
+        os.path.join(project_dir, "Config", "DefaultEditorSettings.ini"),
+        os.path.join(saved_dir, "Config", "WindowsEditor", "EditorPerProjectUserSettings.ini"),
+        os.path.join(saved_dir, "Config", "WindowsEditor", "EditorSettings.ini"),
+    )
+    for candidate in settings_candidates:
+        if os.path.isfile(candidate):
+            selected_ini = candidate
+            break
 
-if info["editor_throttle"] is None:
-    try:
-        settings_ini = os.path.join(
-            saved_dir, "Config", "WindowsEditor", "EditorPerProjectUserSettings.ini"
-        )
-        with open(settings_ini, "r", encoding="utf-8-sig", errors="replace") as handle:
-            settings_text = handle.read()
-        match = re.search(
-            r"^\\s*bThrottleCPUWhenNotForeground\\s*=\\s*(True|False|1|0)\\s*(?:[;#].*)?$",
-            settings_text,
-            flags=re.IGNORECASE | re.MULTILINE,
-        )
-        if match:
-            info["editor_throttle"] = match.group(1).lower() in ("true", "1")
-    except Exception:
-        pass
+    throttle_value = None
+    if selected_ini is not None:
+        in_performance_section = False
+        with open(selected_ini, "r", encoding="utf-8-sig", errors="replace") as handle:
+            for line in handle:
+                section = re.match(r"^\\s*\\[([^]]+)\\]\\s*$", line)
+                if section:
+                    in_performance_section = (
+                        section.group(1).strip().lower()
+                        == "/script/unrealed.editorperformancesettings"
+                    )
+                    continue
+                if not in_performance_section:
+                    continue
+                match = re.match(
+                    r"^\\s*bThrottleCPUWhenNotForeground\\s*=\\s*(True|False|1|0)\\s*(?:[;#].*)?$",
+                    line,
+                    flags=re.IGNORECASE,
+                )
+                if match:
+                    throttle_value = match.group(1).lower() in ("true", "1")
+                    break
+
+    if throttle_value is None:
+        info["editor_throttle"] = {{
+            "throttling": True,
+            "source": "default (キーなし)",
+            "path": selected_ini,
+        }}
+    else:
+        info["editor_throttle"] = {{
+            "throttling": throttle_value,
+            "source": "ini",
+            "path": selected_ini,
+        }}
+except Exception:
+    info["editor_throttle"] = {{
+        "throttling": None,
+        "source": "unknown (探索失敗)",
+        "path": selected_ini,
+    }}
 
 probe_path = os.path.join(saved_dir, ".ue_remote_probe_" + str(os.getpid()) + "_" + str(time.time_ns()))
 try:

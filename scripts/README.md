@@ -22,7 +22,7 @@ python3 scripts/probe.py --host 100.71.174.134 --port 30010 --timeout 5 \
 1. TCP で接続できるか
 2. `GET /remote/info` から Remote Control のルート一覧を取得できるか
 3. `ExecutePythonCommandEx` が Python を実行し、確認用文字列を返すか
-4. Python で UE・プロジェクト・プラグイン・公開シンボル・エディタの CPU スロットリング設定（ベストエフォート）の情報を取得できるか、および `Saved` 配下で排他的な一時ファイルの作成と削除ができるか
+4. Python で UE・プロジェクト・プラグイン・公開シンボルの情報を取得できるか、ini からエディタの CPU スロットリング設定を `editor_throttle` (`throttling`・`source`・`path`) として判定できるか、および `Saved` 配下で排他的な一時ファイルの作成と削除ができるか
 5. `/remote/search/assets` で Asset Registry を検索できるか
 6. `/remote/object/describe` で UObject のメタデータを取得できるか
 7. `/remote/batch` の 1 往復で 2 件の応答を取得できるか（既定は `SKIP`。`--include-batch` 指定時のみ実施）
@@ -39,7 +39,7 @@ Python が利用できない場合、Python に依存する環境情報の検査
 - **Remote Control API** と **Python Editor Script Plugin** が有効か
 - Remote Control の remote Python execution を許可する設定が有効か
 - `/remote/info` に必要なルートが現れているか
-- `/remote/info` の median レイテンシが 100 ms を超える場合、Editor Preferences > Performance > **Use Less CPU when in Background**（`bThrottleCPUWhenNotForeground`）を無効にすると改善するか
+- `/remote/info` の median レイテンシが 100 ms を超える場合、Editor Preferences > General > Performance > **Use Less CPU when in Background** を無効にするか、`<ProjectDir>/Config/DefaultEditorSettings.ini` の `[/Script/UnrealEd.EditorPerformanceSettings]` にある `bThrottleCPUWhenNotForeground` を確認する（実測: 有効時 約320 ms、無効時 約28 ms）
 - UE のログに Remote Control、Python、権限、ファイル書き込みに関するエラーがないか
 
 Python 実行だけが失敗する場合は、Python Editor Script Plugin と remote Python execution 許可設定を最初に確認してください。`Saved` 書き込みだけが失敗する場合は、プロジェクトディレクトリの権限、セキュリティソフト、残留ファイルやロックを確認してください。

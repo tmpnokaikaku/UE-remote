@@ -132,41 +132,99 @@ DefaultBindAddress=100.71.168.109
 
 ---
 
-## Step 5. C++ プラグインの配置（Phase 2 以降）
+## Step 5. K2 ノード操作プラグインの配置（Phase 2 以降）
 
-Blueprint のノードグラフ編集用の C++ プラグイン `UEBlueprintBridge` を、
-UE プロジェクトの `Plugins/` 配下に置いてビルドする。
+Blueprint のノードグラフ編集用の C++ プラグインを、UE プロジェクトの `Plugins/` 配下に置いてビルドする。
 
-> このプラグインは Phase 2 で実装する。Step 4 までで Python 経由の操作は動くので、
-> ここは後回しでよい。
+> **Phase 2 は既存プラグインの調査から始める。** 自作ありきにしない。
+> K2 ノード操作を実装済みの UE 用 MCP プラグインが複数公開されているため、
+> UE 5.4 で動きライセンスが適合するものがあれば、それを流用する方が速い。
+> 判断基準は [architecture.md の 4-1](architecture.md) を参照。
+>
+> Step 4 までで Python 経由の操作は動くので、ここは後回しでよい。
 
 ---
 
-## Step 6. 疎通確認
+## Step 6. 疎通確認とプローブ
 
-### 大学PC 自身から
+Remote Control が「何をどこまで通すか」を機械的に測る。ここで得た実測が Phase 1 の設計根拠になる。
+
+### 6-1. 大学PC 自身から（ローカル疎通）
 
 ```powershell
 curl.exe http://127.0.0.1:30010/remote/info
 ```
 
-ルート一覧の JSON が返れば、Remote Control 自体は動いている。
+ルート一覧の JSON が返れば Remote Control 自体は動いている。返らなければ Step 2/3 に戻る。
 
 ```powershell
 curl.exe http://100.71.168.109:30010/remote/info
 ```
 
-こちらも返れば、NetBird IP への bind も成功している。
+こちらも返れば NetBird IP への bind も成功している。**IP は Step 1-3 で確認した実際の値に置き換える。**
 
-### 手元PC（WSL）から
+### 6-2. 手元PC（WSL）から
 
-本リポジトリの能力プローブを走らせる。何がどこまで通るかを機械的に測る。
+前提を順に満たす。**この順序が重要。**
+
+1. 大学PC で NetBird 接続済み（`netbird status` が `Management: Connected`）
+2. 大学PC で **その後に** Unreal Editor を起動し、プロジェクトを開いたまま放置
+3. 手元PC で NetBird 接続済み（`netbird status` で相手ピアが `Connected` と出ること）
+
+到達性だけ先に確認する。
 
 ```bash
-python3 scripts/probe.py --host 100.71.168.109 --port 30010 --md report.md --json report.json
+netbird status --detail | grep -A3 univ-ue-pc
+curl -m 5 http://100.71.168.109:30010/remote/info
 ```
 
-出力された `report.md` を共有すれば、Phase 1 以降の実装方針を実測に基づいて確定できる。
+プローブを実行する。Python 3.10 以降、外部パッケージ不要。
+
+```bash
+cd UE-remote
+python3 scripts/probe.py \
+  --host 100.71.168.109 \
+  --port 30010 \
+  --timeout 5 \
+  --md probe-result.md \
+  --json probe-result.json
+```
+
+| オプション | 既定値 | 備考 |
+|---|---|---|
+| `--host` | `127.0.0.1` | 環境変数 `UE_REMOTE_HOST` でも指定可 |
+| `--port` | `30010` | 環境変数 `UE_REMOTE_PORT` でも指定可 |
+| `--timeout` | `5`（秒） | 回線が不安定なら 10 程度に |
+| `--md` / `--json` | 省略時は標準出力のみ | `--json` には各 HTTP 応答の生 body も入る |
+
+毎回同じ相手を叩くなら環境変数にしておくと楽。
+
+```bash
+export UE_REMOTE_HOST=100.71.168.109
+export UE_REMOTE_PORT=30010
+python3 scripts/probe.py --md probe-result.md --json probe-result.json
+```
+
+### 6-3. 結果の読み方
+
+終了コードは **TCP 到達性か `/remote/info` が落ちたときだけ `1`**。個別機能の `FAIL` は
+「その機能が使えない」という測定結果なので `0` のまま。つまり `exit 0` でも中身は必ず見る。
+
+| 検査 | FAIL のとき疑うもの |
+|---|---|
+| TCP 到達性 | NetBird の接続状態、bind アドレス、UE 起動順 |
+| `GET /remote/info` | Remote Control API プラグイン、Auto Start Web Server |
+| Python 実行 | Python Editor Script Plugin、Step 3 のリモート Python 実行許可 |
+| 環境情報 | Python 実行が FAIL なら自動的に `SKIP` |
+| `search/assets` / `describe` / `batch` | ルート一覧に該当エンドポイントがあるか |
+| レイテンシ | P2P か Relayed か（`netbird status --detail` の `Connection type`） |
+
+環境情報の検査は、UE バージョン・プロジェクトパス・有効プラグイン一覧に加えて
+`unreal.K2Node` などの**シンボル有無**を返す。**Phase 2 で既存プラグインを評価する際の
+前提条件がここで確定する**ため、この項目の出力は特に重要。
+
+`probe-result.md` を共有すれば、Phase 1 以降の実装方針を実測に基づいて確定できる。
+`probe-result.*` は生成物なのでコミットしない。
 
 ---
 

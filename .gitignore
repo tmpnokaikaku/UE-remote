@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# UE-remote 固有
+probe-result.*
+*.local.md

@@ -23,7 +23,7 @@ Claude Code / Codex                          NetBird (機械登録)
 | `docs/` | アーキテクチャと手順書 | — |
 | `scripts/` | 能力プローブ等の運用スクリプト | 手元PC |
 | `mcp/` | MCP サーバ本体 | 手元PC |
-| `plugins/` | UE C++ プラグイン `UEBlueprintBridge` | 大学PC |
+| `plugins/` | UE C++ プラグイン（K2 ノード操作。既存の流用 or 自作） | 大学PC |
 
 ## セットアップ
 
@@ -36,7 +36,7 @@ Claude Code / Codex                          NetBird (機械登録)
 |---|---|---|
 | 0 | リポジトリ骨格・文書・能力プローブ | 進行中 |
 | 1 | MCP サーバ本体（RC クライアント / ロック / 監査ログ / ツール群） | 未着手 |
-| 2 | C++ プラグイン `UEBlueprintBridge`（K2 ノード操作） | 未着手 |
+| 2 | K2 ノード操作プラグイン（**既存プラグインの調査・評価が先**、無ければ自作） | 未着手 |
 | 3 | NetBird setup key 再登録 + 実機検証 | 未着手 |
 
 ## 注意

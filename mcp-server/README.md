@@ -4,6 +4,47 @@
 stdio MCPサーバです。参照系ツールはロックなしで利用でき、変更系ツールの初回実行時に
 大学PC上のセッションロックを取得します。
 
+## 前提: NetBird の接続
+
+大学PC に届かないと何も動かない。**まず NetBird が繋がっていることを確認する。**
+
+```bash
+netbird status
+```
+
+`Management: Connected` かつ相手ピアが見えていればよい。
+
+### `Daemon status: NeedsLogin` と出たら
+
+手元PC の NetBird は **SSO ログインで、セッションが 8〜24 時間で切れる**。
+切れると MCP のツールが次のようなエラーを返す。
+
+```
+RemoteControlUnreachable: Remote Control サーバ 100.71.174.134:30010 に接続できません: TimeoutError
+```
+
+対処は再ログイン。**対話的な SSO なので、端末で自分で実行する必要がある。**
+
+```bash
+netbird up
+```
+
+### 毎日ログインし直したくない場合
+
+NetBird ダッシュボードの **Peers → 該当ピア → Login expiration を無効化**する。
+SSO の身元は保ったまま、期限だけ外せる。AI エージェントに継続的に作業させる
+用途では実質必須。
+
+> 大学PC 側は setup key による機械登録に切り替え済みなので、この問題は起きない
+> （[setup-university-pc.md](../docs/setup-university-pc.md) Step 1）。
+> 手元PC は個人の端末なので、身元の残る SSO のまま期限だけ外すほうが望ましい。
+
+### 大学PC 側の前提
+
+- NetBird が接続済みで、**その後に** Unreal Editor が起動していること（起動順が逆だと
+  Remote Control が NetBird IP に bind できない）
+- 対象プロジェクトが開かれたままであること
+
 ## インストール
 
 Python 3.10以上の仮想環境へインストールします。

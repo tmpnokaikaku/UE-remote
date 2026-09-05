@@ -310,41 +310,49 @@ except Exception as exc:
     info["plugin_query_error"] = type(exc).__name__ + ": " + str(exc)
 
 # EditorPerformanceSettings は UE 5.5.4 の Python に公開されていないため、
-# 優先順で最初に見つかった ini から読み取る。キーがなければ UE の既定値 True。
+# 優先順でキーが最初に見つかった ini から読み取る。キーがなければ UE の既定値 True。
 selected_ini = None
 try:
+    def read_throttle_value(candidate):
+        try:
+            in_performance_section = False
+            with open(candidate, "r", encoding="utf-8-sig", errors="replace") as handle:
+                for line in handle:
+                    section = re.match(r"^\\s*\\[([^]]+)\\]\\s*$", line)
+                    if section:
+                        in_performance_section = (
+                            section.group(1).strip().lower()
+                            == "/script/unrealed.editorperformancesettings"
+                        )
+                        continue
+                    if not in_performance_section:
+                        continue
+                    match = re.match(
+                        r"^\\s*bThrottleCPUWhenNotForeground\\s*=\\s*(True|False|1|0)\\s*(?:[;#].*)?$",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if match:
+                        return match.group(1).lower() in ("true", "1")
+        except Exception:
+            pass
+        return None
+
     settings_candidates = (
         os.path.join(project_dir, "Config", "DefaultEditorSettings.ini"),
         os.path.join(saved_dir, "Config", "WindowsEditor", "EditorPerProjectUserSettings.ini"),
         os.path.join(saved_dir, "Config", "WindowsEditor", "EditorSettings.ini"),
     )
+    throttle_value = None
     for candidate in settings_candidates:
         if os.path.isfile(candidate):
-            selected_ini = candidate
-            break
-
-    throttle_value = None
-    if selected_ini is not None:
-        in_performance_section = False
-        with open(selected_ini, "r", encoding="utf-8-sig", errors="replace") as handle:
-            for line in handle:
-                section = re.match(r"^\\s*\\[([^]]+)\\]\\s*$", line)
-                if section:
-                    in_performance_section = (
-                        section.group(1).strip().lower()
-                        == "/script/unrealed.editorperformancesettings"
-                    )
-                    continue
-                if not in_performance_section:
-                    continue
-                match = re.match(
-                    r"^\\s*bThrottleCPUWhenNotForeground\\s*=\\s*(True|False|1|0)\\s*(?:[;#].*)?$",
-                    line,
-                    flags=re.IGNORECASE,
-                )
-                if match:
-                    throttle_value = match.group(1).lower() in ("true", "1")
-                    break
+            if selected_ini is None:
+                selected_ini = candidate
+            candidate_value = read_throttle_value(candidate)
+            if candidate_value is not None:
+                throttle_value = candidate_value
+                selected_ini = candidate
+                break
 
     if throttle_value is None:
         info["editor_throttle"] = {{

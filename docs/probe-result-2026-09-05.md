@@ -93,11 +93,38 @@ Remote Control の HTTP 処理はゲームスレッド上で行われるため�
 エディタのフレームレートがそのまま応答遅延になる。大学PC は誰も操作していない＝
 常に非フォーカスなので、既定設定では常時スロットリングされた状態になる。
 
-対処は Editor Preferences > Performance > **Use Less CPU when in Background** を
-無効にすること。設定キーは `[/Script/UnrealEd.EditorPerProjectUserSettings]` の
-`bThrottleCPUWhenNotForeground`（`EditorPerProjectUserSettings.ini`）。
+#### 検証済み: 無効化により約 11 倍高速化
 
-**未検証**: 実際に無効化してどこまで縮むかは要測定。仮説の段階。
+`Edit > Editor Preferences > General > Performance` の
+**Use Less CPU when in Background** を OFF にし、エディタのフォーカスを外した状態で再測定した。
+
+| 状態 | median | 換算 |
+|---|---|---|
+| スロットリング有効（既定）・非フォーカス | **約 320 ms** | 約 3 FPS |
+| スロットリング無効・非フォーカス | **約 28 ms** | 約 35 FPS |
+
+大学PC は無人運用が前提なので、非フォーカスが定常状態になる。**この設定は必須。**
+
+書き込み先は実測により以下と確定した。
+
+```ini
+; <ProjectDir>/Config/DefaultEditorSettings.ini
+[/Script/UnrealEd.EditorPerformanceSettings]
+bThrottleCPUWhenNotForeground=False
+```
+
+> 当初 Web 検索を根拠に `[/Script/UnrealEd.EditorPerProjectUserSettings]` /
+> `EditorPerProjectUserSettings.ini` と案内したが、**UE 5.5 では誤り**だった。
+>
+> また **UE は既定値と異なる値だけを ini に書く**。この設定の既定は `True` なので、
+> **キーが1行も無い状態＝スロットリング有効**を意味する。「未設定」ではない。
+
+#### Python から設定を読む経路は存在しない
+
+`unreal.EditorPerformanceSettings` は Python に公開されていない
+（`hasattr` が False）。`unreal.EditorPerProjectUserSettings` は存在するが、
+その CDO に throttle 関連のプロパティは1つも無い（`props: []`）。
+**ini を読む以外に確認方法が無い。**
 
 ## 利用可能なエンドポイント（`/remote/info` より抜粋）
 
@@ -118,11 +145,12 @@ Put      /remote/batch                  ← 存在するが使用禁止
 
 ## 未確認・要確認
 
-- `bThrottleCPUWhenNotForeground` を無効にした場合のレイテンシ改善幅
-- `K2Node` 経由でノード追加・ピン配線が可能かの実地確認
+- `K2Node` 経由でノード追加・ピン配線が可能かの実地確認（Phase 2）
 
 ## 決着した論点
 
-- **対象プロジェクト**: `hitotsubashi_2025_3` で確定。`DefaultEngine.ini` の
+- **CPU スロットリング**: 無効化により 320ms → 28ms を実測で確認。
+- **対象プロジェクト**: 現在の接続先は `hitotsubashi_2025_3`。ただしこれは
+  検証用サンドボックスであり、今年の本番プロジェクトは別途新規作成される。`DefaultEngine.ini` の
   `GameName=MyProject6` は複製元の名残であり、識別子にならない。
   詳細と他プロジェクトの棚卸しは [projects.md](projects.md) を参照。

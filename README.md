@@ -28,14 +28,16 @@ Claude Code / Codex                          NetBird (機械登録)
 ## セットアップ
 
 - 大学PC 側: [docs/setup-university-pc.md](docs/setup-university-pc.md)
+- 対象プロジェクトの特定: [docs/projects.md](docs/projects.md)
+- 実測結果: [docs/probe-result-2026-09-05.md](docs/probe-result-2026-09-05.md)
 - 手元PC 側: Phase 1 で追加予定
 
 ## 進捗
 
 | Phase | 内容 | 状態 |
 |---|---|---|
-| 0 | リポジトリ骨格・文書・能力プローブ | 進行中 |
-| 1 | MCP サーバ本体（RC クライアント / ロック / 監査ログ / ツール群） | 未着手 |
+| 0 | リポジトリ骨格・文書・能力プローブ | **完了**（実機で測定済み） |
+| 1 | MCP サーバ本体（RC クライアント / ロック / 監査ログ / プロジェクトガード / ツール群） | 次 |
 | 2 | K2 ノード操作プラグイン（**既存プラグインの調査・評価が先**、無ければ自作） | 未着手 |
 | 3 | NetBird setup key 再登録 + 実機検証 | 未着手 |
 

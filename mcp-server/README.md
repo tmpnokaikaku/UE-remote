@@ -72,15 +72,26 @@ NetBirdのsetup key、トークン、パスワードなどの秘密とともに�
 Claude CodeではCLIからも登録できます。
 
 ```bash
-claude mcp add --transport stdio ue-remote -- \
+claude mcp add -s user --transport stdio ue-remote -- \
   /absolute/path/to/UE-remote/.venv/bin/ue-remote-mcp
 ```
 
-登録できたかは次で確認する。`✔ Connected` と出れば成功。
+> **`-s user` を付けること。** 省略するとプロジェクトスコープ（起動した
+> ディレクトリ）に登録され、**別のディレクトリから Claude Code を起動すると
+> ツールが現れない**。実際にこれを踏んだ: `UE-remote/` で登録したが、
+> セッションは親の `remote-ue-dev/` で起動していたため見えなかった。
+> `claude mcp list` は `✔ Connected` と出るのに、AI からはツールが見えない
+> という分かりにくい形で失敗する。
+
+登録できたかは、**実際に使うディレクトリで**次を実行して確認する。
+`✔ Connected` と出れば成功。
 
 ```bash
 claude mcp list
 ```
+
+登録・変更した後は **Claude Code を再起動する**こと。MCP サーバはセッション
+開始時に読み込まれるため、起動中のセッションには反映されない。
 
 Codexでは次のCLI登録が使えます。
 

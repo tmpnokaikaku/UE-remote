@@ -183,6 +183,39 @@ PUT /remote/object/call
 - 集計可能にするため、大学PC 側にも要約を追記する。ツール呼び出しごとに往復を増やさないよう、
   一定件数ごと、またはセッション終了時にまとめて送る
 
+## Remote Control のセキュリティ設定（UE 5.4.4 実機で確認）
+
+Remote Control には Epic 純正のアクセス制御があり、**既定のままでは localhost 以外を全て弾く**。
+設定は `[/Script/RemoteControlCommon.RemoteControlSettings]`、書き込み先は
+`DefaultEngine.ini` ではなく **`RemoteControl.ini`**（`UCLASS(Config=RemoteControl)` のため）。
+
+| 設定 | 本構成での値 | 理由 |
+|---|---|---|
+| `bRestrictServerAccess` | ON | 許可 IP 以外を拒否させる。NetBird に加えた第2の層 |
+| `AllowlistedClients` | 手元PC の NetBird IP | 既定は `127.0.0.1` のみ。ここを足さないと繋がらない |
+| `bEnforcePassphraseForRemoteClients` | OFF | 後述 |
+| `bAutoStartWebSocketServer` | OFF | WebSocket(30020) は bind が `0.0.0.0` で大学 LAN に開く。本構成では不要 |
+| `bEnableRemotePythonExecution` | ON | この仕組みの生命線 |
+| `bAllowConsoleCommandRemoteExecution` | ON | コンソールコマンド経由の操作に使う |
+
+### パスフレーズを使わない判断
+
+`bEnforcePassphraseForRemoteClients` を ON にすると非 localhost クライアントに
+パスフレーズを要求できる。多層防御としては望ましいが、**クライアント側がどの HTTP
+ヘッダにどう符号化して送るのかが Epic の公式ドキュメントに存在しない**。
+`WebRemoteControl.cpp` の実装にしか無く、コミュニティでも「ドキュメントにもエラー
+メッセージにも説明が無い」と報告されている。
+
+仕様が確定していない認証を、自由に実験できない共用機に入れると、
+失敗時に「設定が悪いのか実装が悪いのか」を切り分けられなくなる。
+よって Phase 0 では OFF とし、代わりに以下の三層で守る。
+
+1. NetBird の WireGuard ACL（暗号学的に、許可ピア以外は到達不能）
+2. `DefaultBindAddress` による NetBird 仮想 IP への bind 限定
+3. `AllowlistedClients` による送信元 IP 制限
+
+Phase 1 でプローブを使ってヘッダ形式を実測できたら、パスフレーズの採用を再検討する。
+
 ## 満たしている制約
 
 | 制約 | 満たし方 |

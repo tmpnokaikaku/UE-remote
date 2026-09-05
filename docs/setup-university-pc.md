@@ -65,7 +65,7 @@ netbird status --detail
 確認すること:
 
 - `Management: Connected` / `Signal: Connected`
-- `NetBird IP` の値（`100.71.168.109` を想定。**変わっていたら以降の手順で読み替える**）
+- `NetBird IP` の値（`100.71.168.109` を想定。**変わっていたら以降の手順で読み替える**）  // 大学PC実機確認 100.71.174.134/16
 - `Session expires` の表示が消えている（＝ SSO セッション依存でなくなった）
 
 ### 1-4. サービスが自動起動する状態か確認
@@ -91,19 +91,80 @@ Unreal Editor で対象プロジェクトを開き、`Edit > Plugins` から以�
 
 ## Step 3. Remote Control の設定
 
-`Edit > Project Settings` を開き、Plugins セクションの **Remote Control** を探して以下を設定する。
+`Edit > Project Settings`（プロジェクト設定）→ 左ペイン **プラグイン > リモート コントロール**。
 
-- **Remote Control HTTP Server Port**: `30010`（既定値のまま）
-- **Auto Start Web Server**: ON（エディタ起動時に自動で待ち受け開始）
-- **Python / コンソールコマンドのリモート実行を許可する項目**: ON
+### 3-1. 設定する項目（UE 5.4.4 実機で確認済み）
 
-> 最後の項目は UE のバージョンによって表示名と場所が異なる。
-> 「Remote Python Execution」「Allow Console Command Remote Execution」のような
-> 名前の項目を探して有効にする。**見つけた実際の項目名を控えて共有すること**
-> （手順書を確定させたい）。
+**リモートコントロール Web サーバー**
 
-設定後、`Config/DefaultEngine.ini` に何が書き込まれたかを確認し、その内容も共有する。
-`[/Script/RemoteControl.RemoteControlSettings]` セクションあたりに追記されるはず。
+| 項目（日本語 UI） | C++ 名 | 設定値 |
+|---|---|---|
+| Web サーバーを自動開始 | `bAutoStartWebServer` | **ON** |
+| リモートコントロール HTTP サーバーポート | `RemoteControlHttpServerPort` | `30010` |
+| Web ソケットサーバーを自動開始 | `bAutoStartWebSocketServer` | **OFF**（下記参照） |
+
+**Remote Control > Security**
+
+| 項目（日本語 UI） | C++ 名 | 設定値 |
+|---|---|---|
+| リモート Python 実行を有効化 | `bEnableRemotePythonExecution` | **ON** |
+| コンソールコマンドのリモート実行を許可 | `bAllowConsoleCommandRemoteExecution` | **ON** |
+| サーバーアクセスを制限 | `bRestrictServerAccess` | **ON** のまま |
+| 許可リストに記載されたクライアントの範囲 | `AllowlistedClients` | **手元PC の NetBird IP を追加**（既定は `127.0.0.1` のみ） |
+| リモートクライアントにパスフレーズを強制 | `bEnforcePassphraseForRemoteClients` | **OFF**（下記参照） |
+
+### 3-2. なぜ WebSocket を切るか
+
+WebSocket サーバー（`30020`）の bind アドレスは既定で `0.0.0.0`、つまり**大学の LAN 全体に
+待ち受けが開く**。本構成は HTTP の `30010` しか使わないため、開いている必要がない。
+同じ理由で「リモートコントロール Web インターフェース」（`30000`）も起動しない。
+
+### 3-3. なぜパスフレーズを OFF にするか
+
+「リモートクライアントにパスフレーズを強制」を ON にしたまま
+「リモートコントロールパスフレーズ」が **0 配列エレメント**だと、
+**localhost 以外からの全リクエストが拒否される**。まずここで詰まる。
+
+パスフレーズ自体は多層防御として有用だが、**クライアントがどの HTTP ヘッダに
+どう符号化して送るのかが Epic の公式ドキュメントに一切記載されていない**
+（`WebRemoteControl.cpp` の実装にのみ存在する）。仕様が確定していないものを
+共用機の設定に入れると、失敗時の切り分けができなくなる。
+
+代わりに以下の三層で守る。
+
+1. **NetBird の WireGuard** — 到達できるのは ACL で許可されたピアのみ（暗号学的な保証）
+2. **`DefaultBindAddress`**（Step 4）— そもそも NetBird 仮想 IP にしか bind しない
+3. **`AllowlistedClients`** — その上で許可した NetBird IP からのリクエストだけ通す
+
+パスフレーズは Phase 1 でプローブを使ってヘッダ形式を実測してから再検討する。
+
+### 3-4. 設定がどのファイルに書かれるか（重要）
+
+**`DefaultEngine.ini` を見ても見つからない。** `URemoteControlSettings` は
+`UCLASS(Config=RemoteControl)` として宣言されているため、書き込み先は
+`Engine.ini` ではなく **`RemoteControl.ini`** になる。
+
+| ファイル | 役割 |
+|---|---|
+| `<Project>/Saved/Config/WindowsEditor/RemoteControl.ini` | 設定変更が既定で書かれる先（**そのPCのユーザ専用**） |
+| `<Project>/Config/DefaultRemoteControl.ini` | プロジェクトの既定値（共有される先） |
+
+セクション名は `[/Script/RemoteControlCommon.RemoteControlSettings]`。
+
+実際にどこへ書かれたかは、プロジェクト直下で以下を実行すれば確定する。
+
+```powershell
+Get-ChildItem -Recurse -Filter *.ini |
+  Select-String -Pattern "RemoteControlSettings|bEnableRemotePythonExecution" |
+  Select-Object Path, LineNumber, Line
+```
+
+`Saved/Config/...` 側にしか無い場合、その設定は**このPCのこのユーザにしか効かない**。
+プロジェクト設定画面の右上にある **「デフォルトとして設定」** を押すと
+`Config/DefaultRemoteControl.ini` に昇格し、プロジェクトの設定として固定される。
+共用機なので、**「デフォルトとして設定」を押しておくこと。**
+
+見つかった `RemoteControl.ini` の中身を共有してもらえれば、手順書を確定させる。
 
 ---
 
@@ -233,6 +294,9 @@ python3 scripts/probe.py --md probe-result.md --json probe-result.json
 | 症状 | 確認すること |
 |---|---|
 | 手元から繋がらない | 両側で `netbird status` が `Connected` か。`Connection type` が `P2P` か `Relayed` か |
+| **ping は通るが TCP だけ timeout** | NetBird(L3) は正常。①UE が起動して 30010 を listen しているか ②`AllowlistedClients` に手元の NetBird IP が入っているか ③Windows Firewall が `UnrealEditor.exe` の受信を落としていないか。**`refused` ではなく `timeout` なら、どこかで SYN が破棄されている** |
+| 403 / 401 が返る | `bEnforcePassphraseForRemoteClients` が ON でパスフレーズ未設定になっていないか。`AllowlistedClients` に送信元 IP が入っているか |
+| **設定変更が `DefaultEngine.ini` に現れない** | 正常。Remote Control の設定は `RemoteControl.ini` に書かれる（Step 3-4）。`Saved/Config/WindowsEditor/RemoteControl.ini` を見る。プロジェクトに固定するには「デフォルトとして設定」を押す |
 | `127.0.0.1:30010` も返らない | Remote Control API プラグインが有効か。Auto Start Web Server が ON か。エディタを再起動したか |
 | `127.0.0.1` は返るが NetBird IP は返らない | `DefaultBindAddress` の IP が現在の NetBird IP と一致しているか。UE 起動時に NetBird が繋がっていたか |
 | Python 実行だけ失敗する | Python Editor Script Plugin が有効か。Step 3 のリモート Python 実行許可が ON か |

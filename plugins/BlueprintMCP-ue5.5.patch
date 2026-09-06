@@ -1,0 +1,91 @@
+diff --git a/Source/BlueprintMCP/Private/BlueprintMCPEditorSubsystem.cpp b/Source/BlueprintMCP/Private/BlueprintMCPEditorSubsystem.cpp
+index b804d90..41b3528 100644
+--- a/Source/BlueprintMCP/Private/BlueprintMCPEditorSubsystem.cpp
++++ b/Source/BlueprintMCP/Private/BlueprintMCPEditorSubsystem.cpp
+@@ -24,7 +24,7 @@ void UBlueprintMCPEditorSubsystem::Initialize(FSubsystemCollectionBase& Collecti
+ 		FAssetRegistryModule& ARM = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+ 		IAssetRegistry& AR = ARM.Get();
+ 
+-		if (AR.IsGathering())
++		if (AR.IsLoadingAssets())
+ 		{
+ 			OnFilesLoadedHandle = AR.OnFilesLoaded().AddUObject(
+ 				this, &UBlueprintMCPEditorSubsystem::HandleAssetRegistryReady);
+diff --git a/Source/BlueprintMCP/Private/BlueprintMCPHandlers_Groom.cpp b/Source/BlueprintMCP/Private/BlueprintMCPHandlers_Groom.cpp
+index 7f03a81..5a86d28 100644
+--- a/Source/BlueprintMCP/Private/BlueprintMCPHandlers_Groom.cpp
++++ b/Source/BlueprintMCP/Private/BlueprintMCPHandlers_Groom.cpp
+@@ -569,7 +569,7 @@ FString FBlueprintMCPServer::HandleRebuildGroomBindings(const FString& Body)
+ 			}
+ 		}
+ 
+-		// Phase 2: kick off builds. Capture completion via native delegate.
++		// Phase 2: kick off builds.
+ 		struct FBuildState
+ 		{
+ 			TWeakObjectPtr<UGroomBindingAsset> Asset;
+@@ -588,19 +588,18 @@ FString FBlueprintMCPServer::HandleRebuildGroomBindings(const FString& Body)
+ 			State->Asset = Asset;
+ 			States.Add(State);
+ 
+-			FOnGroomBindingAssetBuildCompleteNative NativeDelegate;
+-			TSharedPtr<FBuildState> StateCapture = State;
+-			NativeDelegate.BindLambda([StateCapture](UGroomBindingAsset*, EGroomBindingAssetBuildResult Result)
+-			{
+-				StateCapture->bDone = true;
+-				StateCapture->bSuccess = (Result == EGroomBindingAssetBuildResult::Succeeded);
+-			});
+-			Asset->Build(NativeDelegate);
++			Asset->Build();
+ 		}
+ 
+ 		// Phase 3: block until all async builds are done.
+ 		TArray<UGroomBindingAsset*> AssetsView = Assets;
+ 		FGroomBindingCompilingManager::Get().FinishCompilation(AssetsView);
++		for (const TSharedPtr<FBuildState>& State : States)
++		{
++			UGroomBindingAsset* Asset = State->Asset.Get();
++			State->bDone = true;
++			State->bSuccess = Asset && Asset->IsValid();
++		}
+ 
+ 		// Phase 4: save each that built successfully.
+ 		for (const TSharedPtr<FBuildState>& State : States)
+@@ -609,7 +608,7 @@ FString FBlueprintMCPServer::HandleRebuildGroomBindings(const FString& Body)
+ 			if (!Asset) continue;
+ 
+ 			const FString Name = Asset->GetName();
+-			bool bConsiderRebuilt = State->bDone ? State->bSuccess : true;
++			bool bConsiderRebuilt = State->bDone && State->bSuccess;
+ 
+ 			if (!bConsiderRebuilt)
+ 			{
+diff --git a/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialMutation.cpp b/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialMutation.cpp
+index 3ecf844..06e0a04 100644
+--- a/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialMutation.cpp
++++ b/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialMutation.cpp
+@@ -1,4 +1,5 @@
+ #include "BlueprintMCPServer.h"
++#include "MaterialDomain.h"
+ #include "Materials/Material.h"
+ #include "Materials/MaterialInstanceConstant.h"
+ #include "Materials/MaterialFunction.h"
+diff --git a/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialRead.cpp b/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialRead.cpp
+index 82202bc..2c949be 100644
+--- a/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialRead.cpp
++++ b/Source/BlueprintMCP/Private/BlueprintMCPHandlers_MaterialRead.cpp
+@@ -1,4 +1,5 @@
+ #include "BlueprintMCPServer.h"
++#include "MaterialDomain.h"
+ #include "Materials/Material.h"
+ #include "Materials/MaterialInstanceConstant.h"
+ #include "Materials/MaterialFunction.h"
+@@ -932,7 +933,7 @@ FString FBlueprintMCPServer::HandleValidateMaterial(const FString& Body)
+ 	bool bValid = true;
+ 
+ 	// Check for compilation errors via FMaterialResource on current platform
+-	FMaterialResource* Resource = Material->GetMaterialResource(GMaxRHIShaderPlatform);
++	FMaterialResource* Resource = Material->GetMaterialResource(GMaxRHIFeatureLevel);
+ 	if (Resource)
+ 	{
+ 		const TArray<FString>& CompileErrors = Resource->GetCompileErrors();

@@ -28,6 +28,7 @@ class FakeClient:
         self.acquire_calls = 0
         self.heartbeat_calls = 0
         self.release_calls = 0
+        self.unavailable = False
 
     def execute_python(self, script: str) -> PythonResult:
         self.execute_calls += 1
@@ -37,6 +38,8 @@ class FakeClient:
             self.heartbeat_calls += 1
         if '"action": "release"' in script:
             self.release_calls += 1
+        if self.unavailable:
+            return PythonResult(False, ["RemoteControlUnreachable"], None, {})
 
         unreal = types.ModuleType("unreal")
         saved_dir = self.saved_dir
@@ -153,6 +156,14 @@ class SessionTest(unittest.TestCase):
         for session in self.sessions:
             session.close()
 
+    def _wait_until(self, predicate: Any, timeout: float = 1.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.01)
+        self.fail("条件が時間内に成立しませんでした")
+
     def test_lock_is_acquired_lazily_only_for_write(self) -> None:
         session = self._session()
 
@@ -239,6 +250,82 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(status["project"]["ok"])
         self.assertEqual(status["project"]["actual"], "ExpectedProject")
         self.assertEqual(guard.verify_calls, 2)
+
+    def test_write_recovers_after_heartbeat_connection_failure(self) -> None:
+        session = self._session()
+        self.assertTrue(session.require_write().ok)
+
+        heartbeat_before_failure = self.client.heartbeat_calls
+        self.client.unavailable = True
+        self._wait_until(
+            lambda: self.client.heartbeat_calls > heartbeat_before_failure
+            and not session._write_healthy
+        )
+
+        self.client.unavailable = False
+        self.assertTrue(session.require_write().ok)
+        self.assertTrue(session._write_healthy)
+        self.assertIsNone(session._health_message)
+
+    def test_heartbeat_resumes_after_connection_recovers(self) -> None:
+        session = self._session()
+        self.assertTrue(session.require_write().ok)
+
+        self.client.unavailable = True
+        self._wait_until(lambda: not session._write_healthy)
+        failed_heartbeat_calls = self.client.heartbeat_calls
+
+        self.client.unavailable = False
+        self.assertTrue(session.require_write().ok)
+        self._wait_until(
+            lambda: self.client.heartbeat_calls > failed_heartbeat_calls
+            and session._write_healthy
+        )
+        self.assertTrue(session.status()["lock"]["heartbeat_running"])
+
+    def test_foreign_lock_is_not_reacquired_until_released(self) -> None:
+        session = self._session()
+        self.assertTrue(session.require_write().ok)
+        path = self.root / "Saved" / "ue-remote" / "session.lock"
+        path.write_text(
+            json.dumps(
+                {
+                    "developer_id": "bob",
+                    "hostname": "lab-pc",
+                    "session_id": "other-session",
+                    "acquired_at": "2099-01-01T00:00:00Z",
+                    "heartbeat_at": "2099-01-01T00:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._wait_until(lambda: not session._owns_lock)
+
+        rejected = session.require_write()
+
+        self.assertFalse(rejected.ok)
+        self.assertIn("bob", rejected.message)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["developer_id"], "bob")
+        self.assertFalse(session.status()["healthy_for_write"])
+
+        path.unlink()
+        self.assertTrue(session.require_write().ok)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["developer_id"], "alice")
+
+    def test_status_becomes_healthy_after_connection_recovers(self) -> None:
+        session = self._session()
+        self.assertTrue(session.require_write().ok)
+
+        self.client.unavailable = True
+        self._wait_until(lambda: not session._write_healthy)
+        self.assertFalse(session.status()["healthy_for_write"])
+
+        self.client.unavailable = False
+        status = session.status()
+
+        self.assertTrue(status["healthy_for_write"])
+        self.assertIsNone(status["health_message"])
+        self.assertTrue(status["lock"]["owned"])
 
     def test_close_releases_lock_and_stops_heartbeat(self) -> None:
         session = self._session()

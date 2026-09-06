@@ -65,6 +65,7 @@ class Session:
 
         self._mutex = threading.RLock()
         self._guard_verify_lock = threading.Lock()
+        self._lock_verify_lock = threading.Lock()
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
         self._guard_result: GuardResult | None = None
@@ -142,32 +143,47 @@ class Session:
         """変更が必要になった時点でロックを遅延取得する。"""
 
         with self._mutex:
-            return self._ensure_lock_locked()
+            if self._closed:
+                return LockResult(False, "セッションはすでに終了しています")
+            if self._owns_lock and self._write_healthy:
+                assert self._lock_result is not None
+                return self._lock_result
+        return self._acquire_lock()
 
-    def _ensure_lock_locked(self) -> LockResult:
-        if self._closed:
-            return LockResult(False, "セッションはすでに終了しています")
-        if not self._write_healthy:
-            return LockResult(False, self._health_message or "セッションが不健全です")
-        if self._owns_lock:
-            assert self._lock_result is not None
-            return self._lock_result
+    def _acquire_lock(self, *, force_check: bool = False) -> LockResult:
+        """ロック操作だけを直列化し、通信中は全体ロックを保持しない。"""
 
-        started = time.perf_counter()
-        try:
-            result = self.lock.acquire()
-        except Exception as exc:
-            result = LockResult(
-                False,
-                f"ロック取得に失敗しました: {type(exc).__name__}: {exc}",
-            )
-        self._last_latency_ms = _elapsed_ms(started)
-        self._lock_result = result
-        if result.ok:
-            self._owns_lock = True
-            self._release_pending = True
-            self._start_heartbeat_locked()
-        return result
+        with self._lock_verify_lock:
+            with self._mutex:
+                if self._closed:
+                    return LockResult(False, "セッションはすでに終了しています")
+                if self._owns_lock and self._write_healthy and not force_check:
+                    assert self._lock_result is not None
+                    return self._lock_result
+
+            started = time.perf_counter()
+            try:
+                result = self.lock.acquire()
+            except Exception as exc:
+                result = LockResult(
+                    False,
+                    f"ロック取得に失敗しました: {type(exc).__name__}: {exc}",
+                )
+            latency_ms = _elapsed_ms(started)
+            with self._mutex:
+                self._last_latency_ms = latency_ms
+                self._lock_result = result
+                self._owns_lock = result.ok
+                if result.ok:
+                    self._release_pending = True
+                    self._write_healthy = True
+                    self._health_message = None
+                    if not self._closed:
+                        self._start_heartbeat_locked()
+                else:
+                    self._write_healthy = False
+                    self._health_message = _lock_rejection(result)
+            return result
 
     def require_read(self) -> AccessResult:
         """参照系ツールの前提条件を確認する。"""
@@ -188,18 +204,15 @@ class Session:
 
         read_result = self.require_read()
         if not read_result.ok:
+            with self._mutex:
+                if read_result.kind == "guard":
+                    self._write_healthy = False
+                    self._health_message = read_result.message
             return read_result
-        with self._mutex:
-            if not self._write_healthy:
-                return AccessResult(
-                    False,
-                    self._health_message or "ハートビート失敗後のため変更を拒否します",
-                    "health",
-                )
-            lock_result = self._ensure_lock_locked()
-            if not lock_result.ok:
-                return AccessResult(False, _lock_rejection(lock_result), "lock")
-            return AccessResult(True, "プロジェクトとセッションロックを確認しました")
+        lock_result = self.ensure_lock()
+        if not lock_result.ok:
+            return AccessResult(False, _lock_rejection(lock_result), "lock")
+        return AccessResult(True, "プロジェクトとセッションロックを確認しました")
 
     def record_tool_call(
         self,
@@ -246,6 +259,21 @@ class Session:
 
         guard_result = self.ensure_guard()
         with self._mutex:
+            # 一度でもロック取得を試みた後は、成功・失敗を問わず現状を
+            # 問い合わせ直す。未使用のセッションでは遅延取得を維持する。
+            should_check_lock = self._lock_result is not None and not self._closed
+        lock_check: LockResult | None = None
+        if guard_result.ok and should_check_lock:
+            lock_check = self._acquire_lock(force_check=True)
+        with self._mutex:
+            if not self._closed:
+                if not guard_result.ok:
+                    self._write_healthy = False
+                    self._health_message = _guard_rejection(guard_result)
+                elif lock_check is None or lock_check.ok:
+                    self._write_healthy = True
+                    self._health_message = None
+        with self._mutex:
             lock_result = self._lock_result
             heartbeat_alive = bool(
                 self._heartbeat_thread and self._heartbeat_thread.is_alive()
@@ -291,11 +319,12 @@ class Session:
         """自分が保持中のロックを明示的に解放する。"""
 
         self._stop_heartbeat()
-        with self._mutex:
-            if not self._release_pending:
-                result = LockResult(False, "このセッションはロックを保持していません")
-                self._lock_result = result
-                return result
+        with self._lock_verify_lock:
+            with self._mutex:
+                if not self._release_pending:
+                    result = LockResult(False, "このセッションはロックを保持していません")
+                    self._lock_result = result
+                    return result
             started = time.perf_counter()
             try:
                 result = self.lock.release()
@@ -304,11 +333,12 @@ class Session:
                     False,
                     f"ロック解放に失敗しました: {type(exc).__name__}: {exc}",
                 )
-            self._last_latency_ms = _elapsed_ms(started)
-            self._lock_result = result
-            self._owns_lock = False
-            if result.ok:
-                self._release_pending = False
+            with self._mutex:
+                self._last_latency_ms = _elapsed_ms(started)
+                self._lock_result = result
+                self._owns_lock = False
+                if result.ok:
+                    self._release_pending = False
             return result
 
     def close(self) -> None:
@@ -319,20 +349,21 @@ class Session:
                 return
             self._closed = True
         self._stop_heartbeat()
-        with self._mutex:
-            release_pending = self._release_pending
-        if release_pending:
-            try:
-                result = self.lock.release()
-            except Exception as exc:
-                result = LockResult(
-                    False,
-                    f"終了時のロック解放に失敗しました: {type(exc).__name__}: {exc}",
-                )
+        with self._lock_verify_lock:
             with self._mutex:
-                self._lock_result = result
-                self._owns_lock = False
-                self._release_pending = False
+                release_pending = self._release_pending
+            if release_pending:
+                try:
+                    result = self.lock.release()
+                except Exception as exc:
+                    result = LockResult(
+                        False,
+                        f"終了時のロック解放に失敗しました: {type(exc).__name__}: {exc}",
+                    )
+                with self._mutex:
+                    self._lock_result = result
+                    self._owns_lock = False
+                    self._release_pending = False
         try:
             self.audit.flush()
         except Exception:
@@ -364,35 +395,44 @@ class Session:
         interval = float(self.config.lock.heartbeat_seconds)
         while not self._heartbeat_stop.wait(interval):
             with self._mutex:
-                if self._closed or not self._owns_lock:
+                if self._closed:
                     return
+                if not self._owns_lock:
+                    continue
 
-            started = time.perf_counter()
-            try:
-                lock_result = self.lock.heartbeat()
-            except Exception as exc:
-                lock_result = LockResult(
-                    False,
-                    f"ハートビートに失敗しました: {type(exc).__name__}: {exc}",
-                )
-            with self._guard_verify_lock:
-                guard_result = self._verify_guard("プロジェクト再確認に失敗しました")
-            with self._mutex:
-                self._last_latency_ms = _elapsed_ms(started)
-                self._lock_result = lock_result
-                if not lock_result.ok or not guard_result.ok:
+            with self._lock_verify_lock:
+                with self._mutex:
+                    if self._closed or not self._owns_lock:
+                        continue
+                started = time.perf_counter()
+                try:
+                    lock_result = self.lock.heartbeat()
+                except Exception as exc:
+                    lock_result = LockResult(
+                        False,
+                        f"ハートビートに失敗しました: {type(exc).__name__}: {exc}",
+                    )
+                with self._guard_verify_lock:
+                    guard_result = self._verify_guard("プロジェクト再確認に失敗しました")
+                with self._mutex:
+                    self._last_latency_ms = _elapsed_ms(started)
+                    self._lock_result = lock_result
+                    if lock_result.ok and guard_result.ok:
+                        self._write_healthy = True
+                        self._health_message = None
+                        continue
+
                     self._write_healthy = False
                     details: list[str] = []
                     if not lock_result.ok:
                         details.append(_lock_rejection(lock_result))
-                        self._owns_lock = False
+                        if _held_by_another_session(lock_result, self.lock):
+                            self._owns_lock = False
                     if not guard_result.ok:
                         details.append(_guard_rejection(guard_result))
                     self._health_message = (
-                        "ハートビート確認に失敗したため、以降の変更を拒否します。"
-                        + " ".join(details)
+                        "ハートビート確認に失敗しました。" + " ".join(details)
                     )
-                    return
 
 
 def _elapsed_ms(started: float) -> float:
@@ -420,6 +460,18 @@ def _lock_rejection(result: LockResult) -> str:
     suffix = f" 保持者: {holder}。" if holder else ""
     message = f"セッションロックを取得できません。{suffix}{result.message}"
     return message + _connection_guidance(result.message)
+
+
+def _held_by_another_session(result: LockResult, lock: Any) -> bool:
+    """応答から別セッションによる保持が確定できる場合だけ真にする。"""
+
+    session_id = result.session_id
+    own_session_id = str(getattr(lock, "session_id", ""))
+    if session_id is not None:
+        return session_id != own_session_id
+    developer_id = result.developer_id
+    own_developer_id = str(getattr(lock, "developer_id", ""))
+    return developer_id is not None and developer_id != own_developer_id
 
 
 def _connection_guidance(message: str) -> str:

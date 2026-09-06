@@ -220,3 +220,6 @@ __marimo__/
 # UE-remote 固有
 probe-result.*
 *.local.md
+
+# Serena MCP
+.serena/

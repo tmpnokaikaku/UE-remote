@@ -18,6 +18,8 @@ class ConfigTests(unittest.TestCase):
 host = "toml-host"
 port = 30010
 timeout_seconds = 4.5
+blueprint_port = 19847
+blueprint_timeout_seconds = 91.5
 developer_id = "toml-developer"
 expected_project = "toml-project"
 
@@ -36,6 +38,7 @@ remote_flush_every = 7
                 {
                     "UE_REMOTE_HOST": "env-host",
                     "UE_REMOTE_PORT": "30123",
+                    "UE_REMOTE_BLUEPRINT_PORT": "29847",
                     "UE_REMOTE_DEVELOPER_ID": "env-developer",
                     "UE_REMOTE_PROJECT": "env-project",
                 },
@@ -43,6 +46,8 @@ remote_flush_every = 7
 
         self.assertEqual("env-host", config.host)
         self.assertEqual(30123, config.port)
+        self.assertEqual(29847, config.blueprint_port)
+        self.assertEqual(91.5, config.blueprint_timeout_seconds)
         self.assertEqual("env-developer", config.developer_id)
         self.assertEqual("env-project", config.expected_project)
         self.assertEqual(4.5, config.timeout_seconds)
@@ -59,14 +64,54 @@ remote_flush_every = 7
 
         self.assertEqual("127.0.0.1", config.host)
         self.assertEqual(30010, config.port)
+        self.assertEqual(9847, config.blueprint_port)
+        self.assertEqual(120.0, config.blueprint_timeout_seconds)
         self.assertEqual("env-only", config.developer_id)
         self.assertIsNone(config.expected_project)
+
+    def test_blueprint_settings_load_from_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "config.toml"
+            config_path.write_text(
+                """
+developer_id = "tester"
+blueprint_port = 19847
+blueprint_timeout_seconds = 72.25
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path, {})
+
+        self.assertEqual(19847, config.blueprint_port)
+        self.assertEqual(72.25, config.blueprint_timeout_seconds)
 
     def test_missing_developer_id_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             missing_path = Path(temporary) / "missing.toml"
             with self.assertRaisesRegex(ConfigError, "developer_id が未設定"):
                 load_config(missing_path, {})
+
+    def test_blueprint_port_out_of_range_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "config.toml"
+            config_path.write_text(
+                'developer_id = "tester"\nblueprint_port = 65536', encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ConfigError, "blueprint_port"):
+                load_config(config_path, {})
+
+    def test_blueprint_timeout_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "config.toml"
+            config_path.write_text(
+                'developer_id = "tester"\nblueprint_timeout_seconds = 0',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ConfigError, "blueprint_timeout_seconds"):
+                load_config(config_path, {})
 
 
 if __name__ == "__main__":

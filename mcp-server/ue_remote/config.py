@@ -42,6 +42,8 @@ class Config:
     timeout_seconds: float
     developer_id: str
     expected_project: str | None
+    blueprint_port: int = 9847
+    blueprint_timeout_seconds: float = 120.0
     lock: LockConfig = field(default_factory=LockConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
 
@@ -183,6 +185,9 @@ def load_config(
 
     host_value: Any = env.get("UE_REMOTE_HOST", values.get("host", "127.0.0.1"))
     port_value: Any = env.get("UE_REMOTE_PORT", values.get("port", 30010))
+    blueprint_port_value: Any = env.get(
+        "UE_REMOTE_BLUEPRINT_PORT", values.get("blueprint_port", 9847)
+    )
     developer_value: Any = env.get("UE_REMOTE_DEVELOPER_ID", values.get("developer_id"))
     project_value: Any = env.get("UE_REMOTE_PROJECT", values.get("expected_project"))
 
@@ -201,6 +206,13 @@ def load_config(
         timeout_seconds=_positive_float(values.get("timeout_seconds", 15.0), "timeout_seconds"),
         developer_id=developer_id,
         expected_project=expected_project,
+        blueprint_port=_integer(
+            blueprint_port_value, "blueprint_port", minimum=1, maximum=65535
+        ),
+        blueprint_timeout_seconds=_positive_float(
+            values.get("blueprint_timeout_seconds", 120.0),
+            "blueprint_timeout_seconds",
+        ),
         lock=LockConfig(
             ttl_seconds=_integer(
                 lock_values.get("ttl_seconds", 300), "lock.ttl_seconds", minimum=1

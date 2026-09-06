@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .audit import AuditLog, AuditResult
+from .bp_client import BlueprintClient
 from .config import Config
 from .guard import GuardResult, ProjectGuard
 from .lock import LockResult, SessionLock
@@ -31,12 +32,18 @@ class Session:
         config: Config,
         *,
         client: Any | None = None,
+        bp_client: Any | None = None,
         guard: Any | None = None,
         lock: Any | None = None,
         audit: Any | None = None,
     ) -> None:
         self.config = config
         self.client = client if client is not None else RemoteControlClient(config)
+        self.bp_client = (
+            bp_client if bp_client is not None else BlueprintClient(config)
+        )
+        # 両 API は同じエディタプロセス内で動くため、BlueprintMCP 用に
+        # ProjectGuard の確認口は増やさず Remote Control 側の結果を共用する。
         self.guard = (
             guard
             if guard is not None

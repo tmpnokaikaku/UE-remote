@@ -37,61 +37,81 @@ Remote Control と同じ基盤なので、**設定済みの `[HTTPServer.Listene
 
 `.uplugin` に `EngineVersion` の指定が無いため、UE がバージョンで弾くこともない。
 
-### 実測: UE 5.5.4 でコンパイルは通る
+### 実測: UE 5.5.4 でのコンパイル結果
 
-大学PC で `RunUAT BuildPlugin` を実行した結果、**コンパイルエラーはゼロ**。
-約50個のソースファイルがすべて処理された（Intermediate に `.dep.json` が生成済み）。
+大学PC で `RunUAT BuildPlugin` を実行した。中間生成物を数えた結果:
 
-**バージョン適合性の問いには答えが出た。5.5 で使える。**
+```
+ソース .cpp : 41 個
+コンパイル済 : 38 個
+.lib / .dll  : 生成なし（リンクまで到達していない）
+```
 
-## ビルドを阻んでいるもの（エンジン側の不備）
+**通らなかったファイルには明確な偏りがある。**
+
+| 通らなかったファイル | 領域 | 我々に必要か |
+|---|---|---|
+| `BlueprintMCPHandlers_Groom.cpp` | Groom / HairStrands | 不要 |
+| `BlueprintMCPHandlers_MaterialMutation.cpp` | マテリアルグラフ | 不要 |
+| `BlueprintMCPHandlers_MaterialRead.cpp` | マテリアルグラフ | 不要 |
+| `BlueprintMCPEditorSubsystem.cpp` | サブシステム | 必要 |
+
+**必要な部分は通っている。**
+
+- `BlueprintMCPHandlers_Mutation.cpp` — Blueprint グラフのノード追加とピン配線の本体
+  （`TryCreateConnection` の呼び出し箇所）。**コンパイル成功**
+- `BlueprintMCPHandlers_Graphs.cpp` / `_Variables.cpp` / `_AnimMutation.cpp` なども成功
+
+5.5 と 5.6 以降の API 差分は、**マテリアルと Groom に集中している**とみられる。
+`BlueprintMCPEditorSubsystem.cpp` はそれらのヘッダを取り込んでいる可能性が高い。
+
+> **未確定**: 具体的なコンパイルエラーの内容は未取得。BuildPlugin のログが、
+> その後のエディタ起動時に走った Turnkey に上書きされて失われたため。
+> ログを保存した状態での再実行が必要。
+
+## ビルドが完了しない原因（要再確認）
+
+エディタ起動時のビルドは、以下で停止した。
 
 ```
 CompilationResultException: FailedDueToEngineChange
 UnrealEditor-CaptureDataUtils.dll: Produced item ... was produced by outdated attributes.
-Building would modify the following engine files:
-  ...\UE_5.5\Engine\Plugins\VirtualProduction\CaptureData\...  （CaptureDataUtils の成果物のみ）
-Please rebuild from an IDE instead.
+Building would modify the following engine files: （CaptureDataUtils の成果物のみ）
 ```
 
-Epic の既知不具合 [UE-230848](https://issues.unrealengine.com/issue/UE-230848) と一致する
-（報告にも「VirtualProduction プラグインを指すエラーが出る」とある）。
+エンジン同梱プラグインの Intermediate を比較すると、`CaptureDataUtils` だけが
+中間生成物 22 ファイルを抱えている（ControlRig / Paper2D は 2 ファイル）。
+Epic の既知不具合 [UE-230848](https://issues.unrealengine.com/issue/UE-230848) と一致する。
 
-### 原因
+> **注意**: これは**エディタ起動時のビルド**の失敗理由であり、
+> `RunUAT BuildPlugin` の失敗理由とは限らない。両者を混同しないこと。
+> BuildPlugin は 38 ファイルまでコンパイルを進めており、
+> 別の原因（個別のコンパイルエラー）で止まった可能性が高い。
 
-エンジン同梱プラグインの Intermediate ディレクトリを比較した。
+なお、エンジン同梱の 1,888 個の `.Build.cs` を走査したが、
+`CaptureData` 配下以外に `CaptureDataUtils` を参照するモジュールは存在しない。
+どの経路でビルドグラフに入るかは未解明。
 
-| モジュール | Intermediate 内のファイル数 |
-|---|---|
-| ControlRig | 2 |
-| Paper2D | 2 |
-| **CaptureDataUtils** | **22**（`.obj` / `.lib` / `.dep.json` / `.sarif`） |
+## 次にやること
 
-通常は事前ビルド済みの印だけを持つところ、**`CaptureDataUtils` だけがビルド中間生成物
-一式を抱えたまま出荷されている**。UBT がそれらのアクションを再評価し、
-「属性が古い」と判断して再ビルドしようとするが、インストール版エンジンなので
-Program Files に書き込めず停止する。
+1. **ログを保存した状態で BuildPlugin を再実行し、4ファイルの実際のエラーを得る**
+2. エラーが 5.5 の API 差分であれば、**その3領域だけを 5.5 向けに移植する**
+   （マテリアルと Groom は我々の用途に不要なので、移植が困難なら
+   ハンドラごと無効化して依存 `MaterialEditor` / `HairStrandsCore` を外す選択もある）
+3. ビルドが通ったら成果物を配布する（下記）
 
-エラーが列挙したファイル群は、この 22 ファイルと一致する。
+## 長期方針: ビルド済みバイナリの配布
 
-### 重要な含意
+UE のプラグインは一度ビルドすれば `Binaries/Win64/*.dll` を置くだけでロードできる。
+**日常的にはコンパイラが不要。** 再ビルドが要るのは、プラグインのソースを変えたときと
+エンジンを更新したときだけ。
 
-- **プラグイン側では回避できない。** どの候補を選んでも同じ場所で止まる
-- エンジン同梱プラグインのどれも `CaptureData` を参照しておらず、
-  `EnabledByDefault` でもない。それでもビルドグラフに入る
-- 大学PC のエンジン全体は正常（502 プラグインすべて 2025-04-15 の同一日付）。
-  異常なのは `CaptureDataUtils` の出荷状態だけ
+- 大学PC の日常運用: DLL を配置済み → ビルドなしで動く
+- バイナリは Git に直接入れず **GitHub Releases に添付**する（無料・リポジトリが膨らまない）
+- ビルドは**専用の最小 C++ プロジェクト**で行う。`.uproject` で不要なプラグインを
+  無効化できるため、`RunUAT BuildPlugin` の合成ホストプロジェクトより制御しやすい
 
-## 未解決 — 次の選択肢
-
-| 案 | 内容 | 影響 |
-|---|---|---|
-| A | エンジンの `CaptureDataUtils/Intermediate` をリネーム後、再ビルド | Program Files を変更。Launcher の Verify で復元可 |
-| B | Epic Games Launcher でエンジンを検証・修復 | 非破壊だが再ダウンロードで時間がかかる |
-| C | 手元PC に UE 5.5 を入れてビルドし、成果物だけ大学PC へ | **大学PC に一切触れない**。手元のディスクと時間を要する |
-
-C は「大学PC にコンパイラを要求しない」構成になるため、長期的には最も筋がよい。
-共用機にビルド環境を依存させないという点で、本プロジェクトの方針とも合う。
+共用機にコンパイラを常時依存させない構成になり、本プロジェクトの方針と整合する。
 
 ## Blueprint 専用プロジェクトの問題（別件・確認済み）
 

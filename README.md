@@ -29,7 +29,7 @@ Claude Code / Codex                          NetBird (機械登録)
 
 - 大学PC 側: [docs/setup-university-pc.md](docs/setup-university-pc.md)
 - 対象プロジェクトの特定: [docs/projects.md](docs/projects.md)
-- 実測結果: [docs/probe-result-2026-09-05.md](docs/probe-result-2026-09-05.md) / [docs/phase2-verified-2026-09-06.md](docs/phase2-verified-2026-09-06.md)
+- 実測結果: [docs/probe-result-2026-09-05.md](docs/probe-result-2026-09-05.md) / [docs/phase2-verified-2026-09-06.md](docs/phase2-verified-2026-09-06.md) / [docs/phase3-blueprint-integration.md](docs/phase3-blueprint-integration.md)
 - UE プラグイン: [plugins/README.md](plugins/README.md)
 - **[トラブルシューティングと知見](docs/troubleshooting.md)** — 症状から引ける索引つき
 - 手元PC 側: [mcp-server/README.md](mcp-server/README.md)
@@ -41,7 +41,7 @@ Claude Code / Codex                          NetBird (機械登録)
 | 0 | リポジトリ骨格・文書・能力プローブ | **完了**（実機で測定済み） |
 | 1 | MCP サーバ本体（RC クライアント / ロック / 監査ログ / プロジェクトガード / ツール群） | **完了**（実機 E2E・MCP 登録まで確認） |
 | 2 | K2 ノード操作プラグイン（既存を選定・UE 5.5 へ移植） | **完了**（実機でピン配線を確認） |
-| 3 | BlueprintMCP を MCP サーバに統合 | 次 |
+| 3 | BlueprintMCP を MCP サーバに統合 | **完了**（実機でロック・監査経由の書き込みを確認） |
 
 ## 注意
 

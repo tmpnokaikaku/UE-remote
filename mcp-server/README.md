@@ -80,6 +80,9 @@ host = "100.71.174.134"          # UE_REMOTE_HOST
 port = 30010                     # UE_REMOTE_PORT
 timeout_seconds = 15.0
 
+blueprint_port = 9847            # UE_REMOTE_BLUEPRINT_PORT  BlueprintMCP プラグイン
+blueprint_timeout_seconds = 120.0
+
 developer_id = "your-id"         # UE_REMOTE_DEVELOPER_ID
 expected_project = "hitotsubashi_2025_3" # UE_REMOTE_PROJECT
 
@@ -91,6 +94,11 @@ heartbeat_seconds = 60
 local_dir = "~/.local/share/ue-remote/audit"
 remote_flush_every = 20
 ```
+
+> **`blueprint_timeout_seconds` を `timeout_seconds` と分けている理由。**
+> Remote Control の1往復は median 約 23ms だが、BlueprintMCP の変更系は
+> **Blueprint のコンパイルと保存を同期で行う**ため1リクエストが数十秒に達する。
+> 同じ 15 秒を使うと正常な操作がタイムアウトする。
 
 `developer_id` は個人を識別する監査主体なので、必ず手元PCだけに置いてください。
 NetBirdのsetup key、トークン、パスワードなどの秘密とともに、この設定ファイルを
@@ -184,6 +192,46 @@ UE_REMOTE_PROJECT = "hitotsubashi_2025_3"
 ロックのハートビート時に確認され、毎ツール呼び出しでは追加通信しません。
 `/remote/batch` はUE 5.5.4をクラッシュさせるため使用できません。
 
+### Blueprint ノードグラフ（BlueprintMCP `:9847`）
+
+Blueprint のノード追加とピン配線は **Python からは原理的に不可能**なため
+（[根拠](../docs/blueprint-python-limits-2026-09-06.md)）、C++ プラグイン
+BlueprintMCP 経由で行います。設計は
+[phase3-blueprint-integration.md](../docs/phase3-blueprint-integration.md)。
+
+| ツール | ロック | 用途 |
+|---|---:|---|
+| `ue_bp_routes` | 不要 | 呼び出せるルートの一覧（`ue_bp_call` の前に引く） |
+| `ue_bp_call` | ルート次第 | 許可リストにあるルートを直接呼ぶエスケープハッチ |
+| `ue_bp_health` | 不要 | プラグインの稼働状態と索引件数 |
+| `ue_bp_list_blueprints` | 不要 | Blueprint の一覧 |
+| `ue_bp_get_blueprint` | 不要 | Blueprint の構造 |
+| `ue_bp_get_graph` | 不要 | ノードグラフ（ノード ID・ピン・接続） |
+| `ue_bp_search` | 不要 | グラフ内のノード検索 |
+| `ue_bp_get_pin_info` | 不要 | ピンの詳細 |
+| `ue_bp_list_functions` | 不要 | クラスの Blueprint 呼び出し可能関数 |
+| `ue_bp_create_blueprint` | 必要 | Blueprint アセットの作成 |
+| `ue_bp_create_graph` | 必要 | 関数 / マクロ / カスタムイベントの作成 |
+| `ue_bp_add_node` | 必要 | ノードの追加 |
+| `ue_bp_delete_node` | 必要 | ノードの削除 |
+| `ue_bp_connect_pins` | 必要 | ピンの配線 |
+| `ue_bp_disconnect_pin` | 必要 | 配線の解除 |
+| `ue_bp_set_pin_default` | 必要 | 入力ピンの既定値 |
+| `ue_bp_add_variable` | 必要 | メンバー変数の追加 |
+| `ue_bp_validate_blueprint` | 必要 | コンパイル検証 |
+
+**ロックとプロジェクトガードは Remote Control 側と共有します。** BlueprintMCP は
+別プロセスではなく同じエディタ内のプラグインなので、排他すべき資源は
+「大学PC のエディタ」1つです。`ue_execute_python` でアクタを動かす作業と
+`ue_bp_add_node` でノードを足す作業は、同じロックを取り合います。
+
+明示ツールに無い操作は `ue_bp_routes` で一覧（全 57 ルート）を引いてから
+`ue_bp_call(route, payload)` で呼びます。`/api/shutdown` や `/api/exec` など
+共用PCで叩いてはいけないルートは、**HTTP を出す前に**理由付きで拒否されます。
+
+> **ノード ID のキー名に注意。** `/api/graph` の応答はノード ID を `id` で返すが、
+> 書き込み系ルートの引数名は `nodeId` である。取り違えやすい。
+
 ## テスト
 
 リポジトリルートからユニットテストを実行します。MCP SDKが未インストールでも、
@@ -201,4 +249,12 @@ UE_REMOTE_HOST=100.71.174.134 \
 UE_REMOTE_DEVELOPER_ID=your-id \
 UE_REMOTE_PROJECT=hitotsubashi_2025_3 \
 python3 mcp-server/smoke_live.py
+```
+
+BlueprintMCP 側は専用のスモークがあります。既定では参照系とルート制御だけを試し、
+`--write` を付けたときだけ実際にロックを取得して Blueprint を書き換えます。
+
+```bash
+python3 mcp-server/bp_smoke_live.py           # 参照系のみ
+python3 mcp-server/bp_smoke_live.py --write   # 変更系も実行
 ```

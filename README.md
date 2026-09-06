@@ -31,6 +31,7 @@ Claude Code / Codex                          NetBird (機械登録)
 - 対象プロジェクトの特定: [docs/projects.md](docs/projects.md)
 - 実測結果: [docs/probe-result-2026-09-05.md](docs/probe-result-2026-09-05.md) / [docs/phase2-verified-2026-09-06.md](docs/phase2-verified-2026-09-06.md)
 - UE プラグイン: [plugins/README.md](plugins/README.md)
+- **[トラブルシューティングと知見](docs/troubleshooting.md)** — 症状から引ける索引つき
 - 手元PC 側: [mcp-server/README.md](mcp-server/README.md)
 
 ## 進捗

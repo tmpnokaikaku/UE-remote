@@ -89,3 +89,63 @@ index 82202bc..2c949be 100644
  	if (Resource)
  	{
  		const TArray<FString>& CompileErrors = Resource->GetCompileErrors();
+diff --git a/Source/BlueprintMCP/Private/BlueprintMCPServer.cpp b/Source/BlueprintMCP/Private/BlueprintMCPServer.cpp
+index 0463635..afe6493 100644
+--- a/Source/BlueprintMCP/Private/BlueprintMCPServer.cpp
++++ b/Source/BlueprintMCP/Private/BlueprintMCPServer.cpp
+@@ -1,4 +1,5 @@
+ #include "BlueprintMCPServer.h"
++#include "Misc/ConfigCacheIni.h"
+ #include "Materials/MaterialExpression.h"
+ #include "AssetRegistry/AssetRegistryModule.h"
+ #include "AssetRegistry/IAssetRegistry.h"
+@@ -838,7 +839,19 @@ bool FBlueprintMCPServer::Start(int32 InPort, bool bEditorMode)
+ 
+ 	HttpModule.StartAllListeners();
+ 
+-	// Verify the listener actually bound by attempting a TCP connection
++	// Verify the listener actually bound by attempting a TCP connection.
++	// The listener may be bound to a specific address through
++	// [HTTPServer.Listeners] DefaultBindAddress (for example when the editor is
++	// only reachable over a VPN interface). Probing a hard-coded 127.0.0.1 would
++	// always fail in that case, so probe the address the listener actually uses.
++	FString ProbeAddress;
++	if (!GConfig->GetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), ProbeAddress, GEngineIni)
++		|| ProbeAddress.IsEmpty()
++		|| ProbeAddress == TEXT("0.0.0.0"))
++	{
++		ProbeAddress = TEXT("127.0.0.1");
++	}
++
+ 	bool bListenerReady = false;
+ 	for (int32 Attempt = 0; Attempt < 5; ++Attempt)
+ 	{
+@@ -847,7 +860,7 @@ bool FBlueprintMCPServer::Start(int32 InPort, bool bEditorMode)
+ 		{
+ 			TSharedRef<FInternetAddr> Addr = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
+ 			bool bIsValid = false;
+-			Addr->SetIp(TEXT("127.0.0.1"), bIsValid);
++			Addr->SetIp(*ProbeAddress, bIsValid);
+ 			Addr->SetPort(Port);
+ 			bool bConnected = TestSocket->Connect(*Addr);
+ 			TestSocket->Close();
+@@ -859,14 +872,16 @@ bool FBlueprintMCPServer::Start(int32 InPort, bool bEditorMode)
+ 				break;
+ 			}
+ 		}
+-		UE_LOG(LogTemp, Warning, TEXT("BlueprintMCP: Bind check attempt %d/5 failed on port %d, retrying..."), Attempt + 1, Port);
++		UE_LOG(LogTemp, Warning, TEXT("BlueprintMCP: Bind check attempt %d/5 failed on %s:%d, retrying..."), Attempt + 1, *ProbeAddress, Port);
+ 		FPlatformProcess::Sleep(1.0f);
+ 	}
+ 
+ 	if (!bListenerReady)
+ 	{
+-		UE_LOG(LogTemp, Error, TEXT("BlueprintMCP: Failed to bind HTTP listener on port %d. Port may be in use."), Port);
+-		HttpModule.StopAllListeners();
++		// Do not call StopAllListeners() here. FHttpServerModule is shared with
++		// other features (Remote Control, for example); stopping every listener
++		// would take those down as collateral damage.
++		UE_LOG(LogTemp, Error, TEXT("BlueprintMCP: Failed to reach HTTP listener on %s:%d. Port may be in use."), *ProbeAddress, Port);
+ 		return false;
+ 	}
+ 

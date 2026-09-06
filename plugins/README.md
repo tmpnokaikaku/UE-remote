@@ -47,6 +47,46 @@ git apply <UE-remote をクローンした場所>\plugins\BlueprintMCP-ue5.5.pat
 | `BlueprintMCPHandlers_MaterialMutation.cpp` | `#include "MaterialDomain.h"` 追加 | `MaterialDomain.h:15` に `MD_Surface` |
 | `BlueprintMCPHandlers_MaterialRead.cpp` | 同上 + `GMaxRHIShaderPlatform` → `GMaxRHIFeatureLevel` | `Material.h:1182` は `ERHIFeatureLevel::Type` を取る |
 | `BlueprintMCPHandlers_Groom.cpp` | 完了デリゲートを廃し `Build()`（引数なし）+ `FinishCompilation()` 後に `IsValid()` で成否判定 | `GroomBindingAsset.h:444` / `:362`、`GroomBindingCompiler.h`(Public) |
+| `BlueprintMCPServer.cpp` | 起動確認の接続先を `DefaultBindAddress` に従わせる。失敗時に `StopAllListeners()` を呼ばない | 下記 |
+
+### `BlueprintMCPServer.cpp` の修正が要る理由（実機で踏んだ）
+
+upstream の起動確認は **`127.0.0.1` 決め打ち**で listener に接続する。
+
+```cpp
+Addr->SetIp(TEXT("127.0.0.1"), bIsValid);
+bool bConnected = TestSocket->Connect(*Addr);
+```
+
+しかし本構成では `[HTTPServer.Listeners] DefaultBindAddress` により
+listener は **NetBird IP にしか bind していない**。localhost は応答しないので
+**この確認は必ず失敗する**。
+
+さらに失敗時の処理が破壊的だった。
+
+```cpp
+HttpModule.StopAllListeners();   // 共有モジュールの全 listener を停止
+```
+
+`FHttpServerModule` は **Remote Control と共有**されているため、
+これを呼ぶと **Remote Control(:30010) まで巻き添えで停止する**。
+実際に両ポートが沈黙し、原因の特定に時間を要した。実機のログ:
+
+```
+13:25:04  Created new HttpListener on 100.71.174.134:30010   ← RC は正常
+13:25:05  Created new HttpListener on 100.71.174.134:9847    ← MCP も正常
+13:25:07  BlueprintMCP: Bind check attempt 1/5 failed ...    ← 誤検知
+13:25:20  Error: Failed to bind HTTP listener on port 9847
+13:25:20  HttListener stopping listening on Port 30010       ← 巻き添え
+```
+
+修正内容:
+
+1. 確認先を `GConfig` から読んだ `DefaultBindAddress` にする
+   （未設定または `0.0.0.0` なら従来どおり `127.0.0.1`）
+2. 失敗時に `StopAllListeners()` を呼ばない。他機能を巻き込まない
+
+**この2点は upstream にとっても不具合**であり、還元する価値が高い。
 
 `FOnGroomBindingAssetBuildCompleteNative` と `EGroomBindingAssetBuildResult` は
 5.6 以降の追加で 5.5 には存在しない。5.5 の `Build()` は引数を取らず、
